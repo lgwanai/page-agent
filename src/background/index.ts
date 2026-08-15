@@ -1,0 +1,64 @@
+import type { RuntimeMessage } from '@/types/messages';
+import type { WorkflowNode } from '@/types/workflow';
+import { loadWorkspace, saveWorkspace } from '@/shared/storage';
+import { connectBridge } from './bridge';
+import { runAction, runNodes, runScript } from './runner';
+
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => undefined);
+  connectBridge();
+});
+chrome.runtime.onStartup.addListener(connectBridge);
+connectBridge();
+
+async function getActiveTab(): Promise<chrome.tabs.Tab> {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id) throw new Error('没有活动网页');
+  return tab;
+}
+
+async function sendAllFrames(message: RuntimeMessage): Promise<void> {
+  const tab = await getActiveTab();
+  const frames = await chrome.webNavigation.getAllFrames({ tabId: tab.id! });
+  await Promise.all((frames ?? [{ frameId: 0 }]).map(async ({ frameId }) => {
+    try { await chrome.tabs.sendMessage(tab.id!, message, { frameId }); }
+    catch { /* restricted or not-yet-loaded frames are ignored */ }
+  }));
+}
+
+chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendResponse) => {
+  if (message.type === 'PAGE_AGENT_SELECTED') {
+    const frameId = sender.frameId ?? 0;
+    chrome.runtime.sendMessage({ type: 'PAGE_AGENT_SELECTION', target: { ...message.target, frameId } }).catch(() => undefined);
+    void sendAllFrames({ type: 'PAGE_AGENT_STOP_SELECT' });
+    sendResponse({ ok: true });
+    return false;
+  }
+  if (message.type === 'PAGE_AGENT_START_SELECT' || message.type === 'PAGE_AGENT_STOP_SELECT') {
+    void sendAllFrames(message)
+      .then(() => sendResponse({ ok: true }))
+      .catch((error: Error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+  if (message.type === 'PAGE_AGENT_GET_STATE') {
+    void loadWorkspace().then((state) => sendResponse({ ok: true, state }));
+    return true;
+  }
+  if (message.type === 'PAGE_AGENT_SET_STATE') {
+    void saveWorkspace(message.state).then(() => sendResponse({ ok: true }));
+    return true;
+  }
+  if (message.type === 'PAGE_AGENT_RUN_NODES') {
+    void runNodes(message.nodes as WorkflowNode[]).then((result) => sendResponse({ ok: result.ok, result }));
+    return true;
+  }
+  if (message.type === 'PAGE_AGENT_RUN_SCRIPT') {
+    void runScript(message.scriptId, message.variables).then((result) => sendResponse({ ok: result.ok, result }));
+    return true;
+  }
+  if (message.type === 'PAGE_AGENT_RUN_ACTION') {
+    void runAction(message.actionId, message.variables).then((result) => sendResponse({ ok: result.ok, result }));
+    return true;
+  }
+  return false;
+});

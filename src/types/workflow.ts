@@ -1,0 +1,118 @@
+export type FriendlyEventType =
+  | 'click'
+  | 'doubleClick'
+  | 'input'
+  | 'select'
+  | 'check'
+  | 'hover'
+  | 'focus'
+  | 'blur'
+  | 'pressKey'
+  | 'submit'
+  | 'scrollIntoView'
+  | 'custom';
+
+export interface PageTarget {
+  selector: string;
+  frameId: number;
+  tagName: string;
+  label: string;
+  text?: string;
+  attributes?: Record<string, string>;
+}
+
+export interface EventDefinition {
+  type: FriendlyEventType;
+  value?: string;
+  customEvent?: string;
+}
+
+interface BaseNode {
+  id: string;
+  name: string;
+  continueOnError?: boolean;
+}
+
+export interface DomNode extends BaseNode {
+  kind: 'dom';
+  target: PageTarget;
+  event: EventDefinition;
+}
+
+export interface AiNode extends BaseNode {
+  kind: 'ai';
+  instruction: string;
+  event: EventDefinition;
+  scopeSelector?: string;
+  actionId?: string;
+}
+
+export interface ActionNode extends BaseNode {
+  kind: 'action';
+  actionId: string;
+}
+
+export interface WaitNode extends BaseNode {
+  kind: 'wait';
+  durationMs: number;
+}
+
+export type WorkflowNode = DomNode | AiNode | ActionNode | WaitNode;
+
+export interface ActionDefinition {
+  id: string;
+  name: string;
+  description?: string;
+  nodes: WorkflowNode[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ScriptDefinition {
+  id: string;
+  name: string;
+  description?: string;
+  urlPattern?: string;
+  nodes: WorkflowNode[];
+  createdAt: number;
+  updatedAt: number;
+  lastRunAt?: number;
+}
+
+export interface WorkspaceState {
+  actions: ActionDefinition[];
+  scripts: ScriptDefinition[];
+  draft: WorkflowNode[];
+}
+
+export interface StepResult {
+  ok: boolean;
+  nodeId: string;
+  message: string;
+  data?: unknown;
+}
+
+export interface RunResult {
+  ok: boolean;
+  steps: StepResult[];
+  error?: string;
+}
+
+export const EVENT_LABELS: Record<FriendlyEventType, string> = {
+  click: '点击',
+  doubleClick: '双击',
+  input: '输入内容',
+  select: '选择选项',
+  check: '勾选 / 取消勾选',
+  hover: '鼠标悬停',
+  focus: '聚焦',
+  blur: '失去焦点',
+  pressKey: '按键',
+  submit: '提交表单',
+  scrollIntoView: '滚动到节点',
+  custom: '自定义 Web 事件',
+};
+
+export function createId(prefix: string): string {
+  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
