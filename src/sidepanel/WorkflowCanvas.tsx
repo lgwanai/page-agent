@@ -34,23 +34,29 @@ function nodeSummary(node: WorkflowNode): string {
   return '调用已保存 Action';
 }
 
+function CanvasNodeForm() {
+  return (
+    <Field<WorkflowNode> name="config">
+      {({ field }) => {
+        const config = field.value;
+        if (!config) return <div className="canvas-node-body">节点数据不可用</div>;
+        const outputs = PORTS[config.kind].filter((port) => port.type === 'output');
+        return <>
+          <div className="canvas-node-head"><span>{config.kind === 'ai' ? '✦' : config.kind === 'dom' ? '⌖' : config.kind === 'condition' ? '◇' : config.kind === 'loop' ? '↻' : '●'}</span><strong>{config.name}</strong></div>
+          <div className="canvas-node-body"><em>{NODE_KIND_LABELS[config.kind]}</em><p>{nodeSummary(config)}</p></div>
+          <div className="canvas-node-ports">{outputs.map((port) => <span key={port.portID} className={`port-${port.portID}`}>{PORT_LABELS[port.portID!]}</span>)}</div>
+        </>;
+      }}
+    </Field>
+  );
+}
+
 function CanvasNode(props: WorkflowNodeProps) {
-  const { node } = useNodeRender();
+  const { node, form } = useNodeRender();
   const meta = node.getNodeMeta<FlowNodeMeta>();
   return (
     <WorkflowNodeRenderer className={`pa-canvas-node canvas-${String(node.flowNodeType)}`} node={props.node} style={meta.wrapperStyle}>
-      <Field<WorkflowNode> name="config">
-        {({ field }) => {
-          const config = field.value;
-          if (!config) return <div className="canvas-node-body">节点数据不可用</div>;
-          const outputs = PORTS[config.kind].filter((port) => port.type === 'output');
-          return <>
-            <div className="canvas-node-head"><span>{config.kind === 'ai' ? '✦' : config.kind === 'dom' ? '⌖' : config.kind === 'condition' ? '◇' : config.kind === 'loop' ? '↻' : '●'}</span><strong>{config.name}</strong></div>
-            <div className="canvas-node-body"><em>{NODE_KIND_LABELS[config.kind]}</em><p>{nodeSummary(config)}</p></div>
-            <div className="canvas-node-ports">{outputs.map((port) => <span key={port.portID} className={`port-${port.portID}`}>{PORT_LABELS[port.portID!]}</span>)}</div>
-          </>;
-        }}
-      </Field>
+      {form?.render() ?? <div className="canvas-node-body">节点数据不可用</div>}
     </WorkflowNodeRenderer>
   );
 }
@@ -129,7 +135,7 @@ export function WorkflowCanvas({ nodes, edges, onChange, onSelect }: CanvasProps
     nodeEngine: { enable: true },
     history: { enable: true, enableChangeNode: true },
     twoWayConnection: false,
-    getNodeDefaultRegistry: (type) => ({ type, meta: { defaultExpanded: true }, formMeta: { render: () => <Field<string> name="title">{() => <></>}</Field> } }),
+    getNodeDefaultRegistry: (type) => ({ type, meta: { defaultExpanded: true }, formMeta: { render: () => <CanvasNodeForm /> } }),
     materials: { renderDefaultNode: CanvasNode },
     onAllLayersRendered: (context) => context.tools.fitView(false),
   }), []);
