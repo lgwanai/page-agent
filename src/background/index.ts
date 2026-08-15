@@ -1,8 +1,10 @@
 import type { RuntimeMessage } from '@/types/messages';
 import type { WorkflowNode } from '@/types/workflow';
 import { loadWorkspace, saveWorkspace } from '@/shared/storage';
+import { loadProvider, saveProvider } from '@/shared/provider-storage';
+import { testProvider } from './ai-provider';
 import { connectBridge } from './bridge';
-import { runAction, runNodes, runScript } from './runner';
+import { runAction, runGraph, runNodes, runScript } from './runner';
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => undefined);
@@ -52,12 +54,32 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendRespo
     void runNodes(message.nodes as WorkflowNode[]).then((result) => sendResponse({ ok: result.ok, result }));
     return true;
   }
+  if (message.type === 'PAGE_AGENT_RUN_GRAPH') {
+    void runGraph(message.nodes as WorkflowNode[], message.edges, message.variables).then((result) => sendResponse({ ok: result.ok, result }));
+    return true;
+  }
   if (message.type === 'PAGE_AGENT_RUN_SCRIPT') {
     void runScript(message.scriptId, message.variables).then((result) => sendResponse({ ok: result.ok, result }));
     return true;
   }
   if (message.type === 'PAGE_AGENT_RUN_ACTION') {
     void runAction(message.actionId, message.variables).then((result) => sendResponse({ ok: result.ok, result }));
+    return true;
+  }
+  if (message.type === 'PAGE_AGENT_GET_PROVIDER') {
+    void loadProvider().then(({ config }) => sendResponse({ ok: true, result: config }));
+    return true;
+  }
+  if (message.type === 'PAGE_AGENT_SAVE_PROVIDER') {
+    void saveProvider(message.config, message.apiKey)
+      .then((config) => sendResponse({ ok: true, result: config }))
+      .catch((error: Error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+  if (message.type === 'PAGE_AGENT_TEST_PROVIDER') {
+    void testProvider(message.config, message.apiKey)
+      .then((result) => sendResponse({ ok: true, result }))
+      .catch((error: Error) => sendResponse({ ok: false, error: error.message }));
     return true;
   }
   return false;

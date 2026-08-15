@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { ExtensionBridge } from './bridge.js';
 
 const bridge = new ExtensionBridge(Number(process.env.PAGE_AGENT_BRIDGE_PORT || 17373));
-const server = new McpServer({ name: 'page-agent', version: '0.1.0' });
+const server = new McpServer({ name: 'page-agent', version: '0.2.0' });
 
 function text(value: unknown) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }] };

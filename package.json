@@ -1,6 +1,6 @@
 {
   "name": "page-agent",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Turn legacy web pages into reusable, model-callable actions and scripts.",
   "type": "module",
@@ -13,6 +13,8 @@
     "mcp:build": "npm --prefix mcp-server run build"
   },
   "dependencies": {
+    "@flowgram.ai/free-layout-editor": "^1.0.13",
+    "reflect-metadata": "^0.2.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
   "name": "Page Agent",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "把历史网页编排成可复用、可由 AI 调用的 Action 与 Script",
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' ws://127.0.0.1:17373"
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' http://* https://* ws://127.0.0.1:17373"
   },
   "permissions": ["sidePanel", "storage", "scripting", "activeTab", "tabs", "webNavigation"],
   "host_permissions": ["http://*/*", "https://*/*"],

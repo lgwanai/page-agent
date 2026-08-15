@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createId, EVENT_LABELS } from './workflow';
+import { createId, EVENT_LABELS, NODE_KIND_LABELS } from './workflow';
 
 describe('workflow contract', () => {
   it('creates prefixed unique ids', () => {
@@ -15,5 +15,11 @@ describe('workflow contract', () => {
     expect(EVENT_LABELS.select).toBe('选择选项');
     expect(EVENT_LABELS.custom).toBe('自定义 Web 事件');
     expect(Object.keys(EVENT_LABELS)).toHaveLength(12);
+  });
+
+  it('exposes branch and loop nodes as first-class workflow types', () => {
+    expect(NODE_KIND_LABELS.condition).toBe('条件分支');
+    expect(NODE_KIND_LABELS.loop).toBe('循环');
+    expect(Object.keys(NODE_KIND_LABELS)).toEqual(expect.arrayContaining(['dom', 'ai', 'condition', 'loop']));
   });
 });

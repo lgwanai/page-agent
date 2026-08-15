@@ -42,6 +42,27 @@ if (!(window as Window & { __pageAgentLoaded?: boolean }).__pageAgentLoaded) {
       }
       return true;
     }
+    if (message.type === 'PAGE_AGENT_READ_SELECTOR') {
+      try {
+        const elements = message.multiple
+          ? [...document.querySelectorAll<HTMLElement>(message.selector)]
+          : [document.querySelector<HTMLElement>(message.selector)].filter(Boolean) as HTMLElement[];
+        if (!elements.length) throw new Error(`输入 selector 不存在：${message.selector}`);
+        const values = elements.map((element) => {
+          const value = element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement || element instanceof HTMLSelectElement
+            ? element.value : undefined;
+          const attributes = Object.fromEntries([...element.attributes].map((attribute) => [attribute.name, attribute.value]));
+          if (message.attribute === 'value') return value ?? '';
+          if (message.attribute === 'html') return element.innerHTML;
+          if (message.attribute === 'attributes') return attributes;
+          return (element.innerText || element.textContent || value || '').trim();
+        });
+        sendResponse({ ok: true, data: message.multiple ? values : values[0], count: values.length });
+      } catch (error) {
+        sendResponse({ ok: false, error: (error as Error).message });
+      }
+      return false;
+    }
     return false;
   });
 }

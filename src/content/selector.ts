@@ -77,6 +77,7 @@ function describe(element: Element): Omit<PageTarget, 'frameId'> {
     if (value) attributes[key] = value;
   }
   return {
+    name: '',
     selector: selectorFor(element),
     tagName: element.tagName.toLowerCase(),
     label: elementLabel(element),
