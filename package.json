@@ -1,6 +1,6 @@
 {
   "name": "page-agent",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "private": true,
   "description": "Turn legacy web pages into reusable, model-callable actions and scripts.",
   "type": "module",

@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, type MutableRefObject } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, type MutableRefObject } from 'react';
 import {
   EditorRenderer, Field, FlowNodeMeta, FreeLayoutEditorProvider, type FreeLayoutPluginContext,
-  type FreeLayoutProps, type WorkflowJSON, type WorkflowNodeProps, WorkflowNodeRenderer,
+  type FreeLayoutProps, type WorkflowJSON, type WorkflowNodeProps, WorkflowNodeRenderer, type WorkflowPort,
   useClientContext, useNodeRender,
 } from '@flowgram.ai/free-layout-editor';
 import '@flowgram.ai/free-layout-editor/index.css';
@@ -12,17 +12,29 @@ interface CanvasProps {
   edges: WorkflowEdge[];
   onChange: (nodes: WorkflowNode[], edges: WorkflowEdge[]) => void;
   onSelect: (nodeId: string | null) => void;
+  onAddFromPort: (nodeId: string, port: EdgePort) => void;
 }
 
-const PORTS: Record<WorkflowNode['kind'], Array<{ type: 'input' | 'output'; portID?: EdgePort }>> = {
-  dom: [{ type: 'input' }, { type: 'output', portID: 'success' }, { type: 'output', portID: 'failure' }],
-  ai: [{ type: 'input' }, { type: 'output', portID: 'success' }, { type: 'output', portID: 'failure' }],
-  action: [{ type: 'input' }, { type: 'output', portID: 'success' }, { type: 'output', portID: 'failure' }],
-  wait: [{ type: 'input' }, { type: 'output', portID: 'success' }, { type: 'output', portID: 'failure' }],
-  loop: [{ type: 'input' }, { type: 'output', portID: 'body' }, { type: 'output', portID: 'done' }, { type: 'output', portID: 'failure' }],
+const inputPort: WorkflowPort = { type: 'input', location: 'left', locationConfig: { left: 0, top: '50%' } };
+const successFailurePorts: WorkflowPort[] = [
+  { type: 'output', portID: 'success', location: 'right', locationConfig: { right: 0, top: '36%' } },
+  { type: 'output', portID: 'failure', location: 'right', locationConfig: { right: 0, top: '72%' } },
+];
+
+const PORTS: Record<WorkflowNode['kind'], WorkflowPort[]> = {
+  dom: [inputPort, ...successFailurePorts],
+  ai: [inputPort, ...successFailurePorts],
+  action: [inputPort, ...successFailurePorts],
+  wait: [inputPort, ...successFailurePorts],
+  loop: [
+    inputPort,
+    { type: 'output', portID: 'body', location: 'right', locationConfig: { right: 0, top: '25%' } },
+    { type: 'output', portID: 'done', location: 'right', locationConfig: { right: 0, top: '50%' } },
+    { type: 'output', portID: 'failure', location: 'right', locationConfig: { right: 0, top: '75%' } },
+  ],
 };
 
-const PORT_LABELS: Partial<Record<EdgePort, string>> = { success: '成功', failure: '失败', body: '遍历', done: '完成' };
+const PortActionContext = createContext<CanvasProps['onAddFromPort']>(() => undefined);
 
 function nodeSummary(node: WorkflowNode): string {
   let summary: string;
@@ -40,11 +52,9 @@ function CanvasNodeForm() {
       {({ field }) => {
         const config = field.value;
         if (!config) return <div className="canvas-node-body">节点数据不可用</div>;
-        const outputs = PORTS[config.kind].filter((port) => port.type === 'output');
         return <>
           <div className="canvas-node-head"><span>{config.kind === 'ai' ? '✦' : config.kind === 'dom' ? '⌖' : config.kind === 'loop' ? '↻' : '●'}</span><strong>{config.name}</strong></div>
           <div className="canvas-node-body"><em>{NODE_KIND_LABELS[config.kind]}</em><p>{nodeSummary(config)}</p></div>
-          <div className="canvas-node-ports">{outputs.map((port) => <span key={port.portID} className={`port-${port.portID}`}>{PORT_LABELS[port.portID!]}</span>)}</div>
         </>;
       }}
     </Field>
@@ -53,9 +63,22 @@ function CanvasNodeForm() {
 
 function CanvasNode(props: WorkflowNodeProps) {
   const { node, form } = useNodeRender();
+  const onAddFromPort = useContext(PortActionContext);
   const meta = node.getNodeMeta<FlowNodeMeta>();
   return (
-    <WorkflowNodeRenderer className={`pa-canvas-node canvas-${String(node.flowNodeType)}`} node={props.node} style={meta.wrapperStyle}>
+    <WorkflowNodeRenderer
+      className={`pa-canvas-node canvas-${String(node.flowNodeType)}`}
+      node={props.node}
+      style={meta.wrapperStyle}
+      portClassName="pa-workflow-port"
+      onPortClick={(port, event) => {
+        if (port.portType !== 'output') return;
+        const mouseEvent = event as React.MouseEvent<HTMLDivElement>;
+        mouseEvent.preventDefault();
+        mouseEvent.stopPropagation();
+        onAddFromPort(node.id, port.portID as EdgePort);
+      }}
+    >
       {form?.render() ?? <div className="canvas-node-body">节点数据不可用</div>}
     </WorkflowNodeRenderer>
   );
@@ -124,7 +147,7 @@ function CanvasBridge({ graph, lastInternal, onChange, onSelect }: {
   return null;
 }
 
-export function WorkflowCanvas({ nodes, edges, onChange, onSelect }: CanvasProps) {
+export function WorkflowCanvas({ nodes, edges, onChange, onSelect, onAddFromPort }: CanvasProps) {
   const graph = useMemo(() => toCanvas(nodes, edges), [nodes, edges]);
   const lastInternal = useRef('');
   const contextRef = useRef<FreeLayoutPluginContext>(null);
@@ -142,10 +165,12 @@ export function WorkflowCanvas({ nodes, edges, onChange, onSelect }: CanvasProps
 
   return (
     <div className="workflow-canvas">
-      <FreeLayoutEditorProvider ref={contextRef} {...props}>
-        <EditorRenderer className="workflow-editor" />
-        <CanvasBridge graph={graph} lastInternal={lastInternal} onChange={onChange} onSelect={onSelect} />
-      </FreeLayoutEditorProvider>
+      <PortActionContext.Provider value={onAddFromPort}>
+        <FreeLayoutEditorProvider ref={contextRef} {...props}>
+          <EditorRenderer className="workflow-editor" />
+          <CanvasBridge graph={graph} lastInternal={lastInternal} onChange={onChange} onSelect={onSelect} />
+        </FreeLayoutEditorProvider>
+      </PortActionContext.Provider>
     </div>
   );
 }

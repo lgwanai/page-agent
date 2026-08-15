@@ -14,7 +14,7 @@ import { ProviderSettings } from './ProviderSettings';
 import './styles.css';
 
 type Mode = 'run' | 'compose';
-type SelectPurpose = { kind: 'node' } | { kind: 'ai-input'; nodeId: string };
+type SelectPurpose = { kind: 'node'; source?: { nodeId: string; port: WorkflowEdge['sourcePort'] } } | { kind: 'ai-input'; nodeId: string };
 type EditingDefinition = { type: 'action' | 'script'; id: string; name: string };
 
 async function send<T = RuntimeResponse>(message: RuntimeMessage): Promise<T> {
@@ -83,10 +83,28 @@ function App() {
         setSelectedId(selectPurpose.nodeId);
         notify(`已添加 AI 输入：${name} · ${target.tagName}`);
       } else {
-        const node: WorkflowNode = { id: createId('node'), kind: 'dom', name, target: namedTarget, event: { type: 'click' }, position: { x: 80 + state.draft.length * 50, y: 80 + state.draft.length * 30 } };
-        setState((current) => ({ ...current, draft: [...current.draft, node] }));
+        const source = selectPurpose?.kind === 'node' ? selectPurpose.source : undefined;
+        const sourceNode = source ? state.draft.find((item) => item.id === source.nodeId) : undefined;
+        const offsetY = source?.port === 'failure' ? 150 : source?.port === 'done' ? 130 : source?.port === 'body' ? -30 : 0;
+        const node: WorkflowNode = {
+          id: createId('node'),
+          kind: 'dom',
+          name,
+          target: namedTarget,
+          event: { type: 'click' },
+          position: sourceNode
+            ? { x: (sourceNode.position?.x ?? 80) + 300, y: (sourceNode.position?.y ?? 80) + offsetY }
+            : { x: 80 + state.draft.length * 50, y: 80 + state.draft.length * 30 },
+        };
+        setState((current) => ({
+          ...current,
+          draft: [...current.draft, node],
+          draftEdges: source && current.draft.some((item) => item.id === source.nodeId)
+            ? [...current.draftEdges, { id: createId('edge'), sourceNodeId: source.nodeId, targetNodeId: node.id, sourcePort: source.port }]
+            : current.draftEdges,
+        }));
         setSelectedId(node.id);
-        notify(`已记录 Selector：${name}`);
+        notify(source ? `已创建并连接 Selector：${name}` : `已记录 Selector：${name}`);
       }
       setSelectPurpose(null);
     };
@@ -103,6 +121,16 @@ function App() {
     const response = await send<RuntimeResponse>({ type: 'PAGE_AGENT_START_SELECT' });
     if (!response.ok) return notify(response.error ?? '无法启动 Selector');
     setSelectPurpose(purpose);
+  };
+
+  const addFromPort = (nodeId: string, port: WorkflowEdge['sourcePort']) => {
+    const existing = state.draftEdges.find((edge) => edge.sourceNodeId === nodeId && edge.sourcePort === port);
+    if (existing) {
+      setSelectedId(existing.targetNodeId);
+      notify('这个路径已经连接了后续节点');
+      return;
+    }
+    void startSelector({ kind: 'node', source: { nodeId, port } });
   };
 
   const addNode = (kind: WorkflowNode['kind']) => {
@@ -200,7 +228,7 @@ function App() {
         <div className="compose-document-bar"><div><strong>{editing?.name ?? '未命名流程'}</strong><span>{editing ? `正在编辑 ${editing.type === 'action' ? 'Action' : 'Script'}` : '新建 · 尚未保存'}</span></div><div><button className="secondary compact" onClick={newDraft}>新建</button><button className="secondary compact" onClick={() => setShowLibrary(true)}>打开</button></div></div>
         <div className="canvas-toolbar"><button className={`tool select-tool ${selectPurpose?.kind === 'node' ? 'active' : ''}`} onClick={() => void startSelector({ kind: 'node' })}><span>⌖</span>{selectPurpose ? '退出选择' : 'Selector'}</button><button className="tool" onClick={() => addNode('ai')}><span>✦</span>AI</button><button className="tool" onClick={() => addNode('loop')}><span>↻</span>循环</button><button className="tool" onClick={() => addNode('wait')}><span>◷</span>等待</button><button className="tool" disabled={!state.actions.length} onClick={() => addNode('action')}><span>↗</span>Action</button></div>
         {selectPurpose && <div className="select-hint"><strong>Selector 已开启</strong><span>{selectPurpose.kind === 'ai-input' ? '在网页中选择一个元素作为 AI 输入。' : '页面事件已暂停；点击元素创建具名网页节点。'}</span></div>}
-        <div className="canvas-layout"><WorkflowCanvas nodes={state.draft} edges={state.draftEdges} onChange={updateGraph} onSelect={setSelectedId} /><NodeInspector node={selectedNode} nodes={state.draft} actions={state.actions} onChange={updateNode} onDelete={deleteNode} onRun={() => selectedNode && void runGraph([selectedNode], [], selectedNode.id)} onPickAiSelector={() => selectedNode && void startSelector({ kind: 'ai-input', nodeId: selectedNode.id })} notify={notify} /></div>
+        <div className="canvas-layout"><WorkflowCanvas nodes={state.draft} edges={state.draftEdges} onChange={updateGraph} onSelect={setSelectedId} onAddFromPort={addFromPort} /><NodeInspector node={selectedNode} nodes={state.draft} actions={state.actions} onChange={updateNode} onDelete={deleteNode} onRun={() => selectedNode && void runGraph([selectedNode], [], selectedNode.id)} onPickAiSelector={() => selectedNode && void startSelector({ kind: 'ai-input', nodeId: selectedNode.id })} notify={notify} /></div>
         {lastRun && <RunReport result={lastRun} />}
       </section>}
     </main>
