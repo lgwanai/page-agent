@@ -115,10 +115,9 @@ function App() {
 
   const addNode = (kind: WorkflowNode['kind']) => {
     const position = { x: 80 + (state.draft.length % 3) * 280, y: 80 + Math.floor(state.draft.length / 3) * 180 };
-    const name = uniqueName(state.draft, { ai: 'AI判断', action: '调用Action', wait: '等待', condition: '条件判断', loop: '循环', dom: '网页节点' }[kind]);
+    const name = uniqueName(state.draft, { ai: 'AI判断', action: '调用Action', wait: '等待', loop: '循环', dom: '网页节点' }[kind]);
     let node: WorkflowNode;
     if (kind === 'ai') node = { id: createId('ai'), kind, name, instruction: '', inputs: [], event: { type: 'click' }, position };
-    else if (kind === 'condition') node = { id: createId('condition'), kind, name, left: '', operator: 'equals', right: '', position };
     else if (kind === 'loop') node = { id: createId('loop'), kind, name, items: '', itemVariable: 'item', indexVariable: 'index', maxIterations: 100, position };
     else if (kind === 'wait') node = { id: createId('wait'), kind, name, durationMs: 500, position };
     else if (kind === 'action') node = { id: createId('action-node'), kind, name, actionId: state.actions[0]?.id ?? '', position };
@@ -173,7 +172,7 @@ function App() {
     <nav className="mode-tabs"><button className={mode === 'run' ? 'active' : ''} onClick={() => setMode('run')}>执行模式</button><button className={mode === 'compose' ? 'active' : ''} onClick={() => setMode('compose')}>画布编排</button></nav>
     <main className={mode === 'compose' ? 'compose-main' : ''}>
       {mode === 'run' ? <RunView state={state} onRun={runScript} running={running} lastRun={lastRun} /> : <section className="compose-view">
-        <div className="canvas-toolbar"><button className={`tool select-tool ${selectPurpose?.kind === 'node' ? 'active' : ''}`} onClick={() => void startSelector({ kind: 'node' })}><span>⌖</span>{selectPurpose ? '退出选择' : 'Selector'}</button><button className="tool" onClick={() => addNode('ai')}><span>✦</span>AI</button><button className="tool" onClick={() => addNode('condition')}><span>◇</span>条件</button><button className="tool" onClick={() => addNode('loop')}><span>↻</span>循环</button><button className="tool" onClick={() => addNode('wait')}><span>◷</span>等待</button><button className="tool" disabled={!state.actions.length} onClick={() => addNode('action')}><span>↗</span>Action</button></div>
+        <div className="canvas-toolbar"><button className={`tool select-tool ${selectPurpose?.kind === 'node' ? 'active' : ''}`} onClick={() => void startSelector({ kind: 'node' })}><span>⌖</span>{selectPurpose ? '退出选择' : 'Selector'}</button><button className="tool" onClick={() => addNode('ai')}><span>✦</span>AI</button><button className="tool" onClick={() => addNode('loop')}><span>↻</span>循环</button><button className="tool" onClick={() => addNode('wait')}><span>◷</span>等待</button><button className="tool" disabled={!state.actions.length} onClick={() => addNode('action')}><span>↗</span>Action</button></div>
         {selectPurpose && <div className="select-hint"><strong>Selector 已开启</strong><span>{selectPurpose.kind === 'ai-input' ? '在网页中选择一个元素作为 AI 输入。' : '页面事件已暂停；点击元素创建具名网页节点。'}</span></div>}
         <div className="canvas-layout"><WorkflowCanvas nodes={state.draft} edges={state.draftEdges} onChange={updateGraph} onSelect={setSelectedId} /><NodeInspector node={selectedNode} nodes={state.draft} actions={state.actions} onChange={updateNode} onDelete={deleteNode} onRun={() => selectedNode && void runGraph([selectedNode], [], selectedNode.id)} onPickAiSelector={() => selectedNode && void startSelector({ kind: 'ai-input', nodeId: selectedNode.id })} notify={notify} /></div>
         {lastRun && <RunReport result={lastRun} />}

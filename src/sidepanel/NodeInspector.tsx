@@ -1,6 +1,6 @@
 import {
   createId, EVENT_LABELS, NODE_KIND_LABELS, type ActionDefinition, type AiInputBinding,
-  type ConditionOperator, type EventDefinition, type WorkflowNode,
+  type ConditionOperator, type EventDefinition, type OutcomeCondition, type WorkflowNode,
 } from '@/types/workflow';
 
 const eventOptions = Object.entries(EVENT_LABELS) as Array<[EventDefinition['type'], string]>;
@@ -18,7 +18,7 @@ export function NodeInspector({ node, nodes, actions, onChange, onDelete, onRun,
   onPickAiSelector: () => void;
   notify: (message: string) => void;
 }) {
-  if (!node) return <aside className="node-inspector empty-inspector"><strong>节点设置</strong><p>在画布中选择一个节点查看和编辑属性。拖动节点端口建立成功、失败、条件或循环连线。</p></aside>;
+  if (!node) return <aside className="node-inspector empty-inspector"><strong>节点设置</strong><p>在画布中选择节点编辑属性。每张执行卡片都有成功和失败出口，连接后即形成顺序逻辑。</p></aside>;
   const updateName = (name: string) => {
     if (nodes.some((item) => item.id !== node.id && item.name === name)) return notify(`节点名称「${name}」已存在`);
     onChange(node.kind === 'dom' ? { ...node, name, target: { ...node.target, name } } : { ...node, name });
@@ -41,6 +41,8 @@ export function NodeInspector({ node, nodes, actions, onChange, onDelete, onRun,
     if (node.kind !== 'ai') return;
     onChange({ ...node, inputs: node.inputs.map((input) => input.id === id ? { ...input, ...patch } : input) });
   };
+  const outcomeCondition: OutcomeCondition = node.outcomeCondition ?? { enabled: false, left: '{{output}}', operator: 'exists' };
+  const updateOutcome = (patch: Partial<OutcomeCondition>) => onChange({ ...node, outcomeCondition: { ...outcomeCondition, ...patch } });
 
   return <aside className="node-inspector">
     <div className="inspector-head"><div><strong>{NODE_KIND_LABELS[node.kind]}</strong><span>{node.id}</span></div><div><button className="icon-btn" title="运行节点" onClick={onRun}>▶</button><button className="icon-btn danger" title="删除节点" onClick={onDelete}>×</button></div></div>
@@ -65,14 +67,7 @@ export function NodeInspector({ node, nodes, actions, onChange, onDelete, onRun,
         </div>)}
         <div className="input-actions"><button className="secondary" onClick={onPickAiSelector}>⌖ Selector 输入</button><button className="secondary" onClick={addNodeInput}>节点输入</button><button className="secondary" onClick={addLiteralInput}>文本输入</button></div>
       </div>
-      <div className="ai-behavior"><strong>模型可执行的动作</strong><p>AI 可以返回一个输入 selector 上的事件，或按准确名称调用已保存 Action。也可以只返回 output，交给条件节点判断。</p></div>
-    </>}
-
-    {node.kind === 'condition' && <>
-      <label>左值 / 表达式<input value={node.left} placeholder="{{AI判断.decision}}" onChange={(event) => onChange({ ...node, left: event.target.value })} /></label>
-      <label>判断方式<select value={node.operator} onChange={(event) => onChange({ ...node, operator: event.target.value as ConditionOperator })}>{conditionOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-      {node.operator !== 'exists' && <label>比较值<input value={node.right ?? ''} placeholder="支持 {{变量}}" onChange={(event) => onChange({ ...node, right: event.target.value })} /></label>}
-      <div className="port-help"><span className="port-true">是</span>与<span className="port-false">否</span>端口分别连接两个分支；执行异常走失败端口。</div>
+      <div className="ai-behavior"><strong>模型可执行的动作</strong><p>AI 可以返回一个输入 selector 上的事件，或按准确名称调用已保存 Action。返回的 output 可以直接由本卡片的结果判断决定走成功还是失败。</p></div>
     </>}
 
     {node.kind === 'loop' && <>
@@ -84,7 +79,15 @@ export function NodeInspector({ node, nodes, actions, onChange, onDelete, onRun,
 
     {node.kind === 'wait' && <label>等待毫秒<input type="number" min="0" max="60000" value={node.durationMs} onChange={(event) => onChange({ ...node, durationMs: Number(event.target.value) })} /></label>}
     {node.kind === 'action' && <label>选择 Action<select value={node.actionId} onChange={(event) => onChange({ ...node, actionId: event.target.value })}><option value="">请选择</option>{actions.map((action) => <option value={action.id} key={action.id}>{action.name}</option>)}</select></label>}
-    <label className="check-label"><input type="checkbox" checked={Boolean(node.continueOnError)} onChange={(event) => onChange({ ...node, continueOnError: event.target.checked })} />没有失败连线时，失败后从成功端口继续</label>
+    {node.kind !== 'loop' && <div className="outcome-section">
+      <label className="check-label"><input type="checkbox" checked={outcomeCondition.enabled} onChange={(event) => updateOutcome({ enabled: event.target.checked })} />启用结果判断</label>
+      {outcomeCondition.enabled && <>
+        <label>判断值 / 表达式<input value={outcomeCondition.left} placeholder="{{output.status}}" onChange={(event) => updateOutcome({ left: event.target.value })} /></label>
+        <label>判断方式<select value={outcomeCondition.operator} onChange={(event) => updateOutcome({ operator: event.target.value as ConditionOperator })}>{conditionOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+        {outcomeCondition.operator !== 'exists' && <label>比较值<input value={outcomeCondition.right ?? ''} placeholder="支持常量或 {{变量}}" onChange={(event) => updateOutcome({ right: event.target.value })} /></label>}
+      </>}
+      <div className="port-help">执行异常或结果判断不满足时走失败出口；没有失败连线则终止流程。</div>
+    </div>}
   </aside>;
 }
 

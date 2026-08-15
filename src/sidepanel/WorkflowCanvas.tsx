@@ -19,19 +19,19 @@ const PORTS: Record<WorkflowNode['kind'], Array<{ type: 'input' | 'output'; port
   ai: [{ type: 'input' }, { type: 'output', portID: 'success' }, { type: 'output', portID: 'failure' }],
   action: [{ type: 'input' }, { type: 'output', portID: 'success' }, { type: 'output', portID: 'failure' }],
   wait: [{ type: 'input' }, { type: 'output', portID: 'success' }, { type: 'output', portID: 'failure' }],
-  condition: [{ type: 'input' }, { type: 'output', portID: 'true' }, { type: 'output', portID: 'false' }, { type: 'output', portID: 'failure' }],
   loop: [{ type: 'input' }, { type: 'output', portID: 'body' }, { type: 'output', portID: 'done' }, { type: 'output', portID: 'failure' }],
 };
 
-const PORT_LABELS: Partial<Record<EdgePort, string>> = { success: '成功', failure: '失败', true: '是', false: '否', body: '遍历', done: '完成' };
+const PORT_LABELS: Partial<Record<EdgePort, string>> = { success: '成功', failure: '失败', body: '遍历', done: '完成' };
 
 function nodeSummary(node: WorkflowNode): string {
-  if (node.kind === 'dom') return `${node.event.type} · ${node.target.tagName}`;
-  if (node.kind === 'ai') return `${node.inputs.length} 个输入 · ${node.instruction || '未填写指令'}`;
-  if (node.kind === 'condition') return `${node.left || '未配置'} ${node.operator}`;
-  if (node.kind === 'loop') return `遍历 ${node.items || '未配置数组'}`;
-  if (node.kind === 'wait') return `${node.durationMs}ms`;
-  return '调用已保存 Action';
+  let summary: string;
+  if (node.kind === 'dom') summary = `${node.event.type} · ${node.target.tagName}`;
+  else if (node.kind === 'ai') summary = `${node.inputs.length} 个输入 · ${node.instruction || '未填写指令'}`;
+  else if (node.kind === 'loop') summary = `遍历 ${node.items || '未配置数组'}`;
+  else if (node.kind === 'wait') summary = `${node.durationMs}ms`;
+  else summary = '调用已保存 Action';
+  return node.outcomeCondition?.enabled ? `${summary} · 结果判断` : summary;
 }
 
 function CanvasNodeForm() {
@@ -42,7 +42,7 @@ function CanvasNodeForm() {
         if (!config) return <div className="canvas-node-body">节点数据不可用</div>;
         const outputs = PORTS[config.kind].filter((port) => port.type === 'output');
         return <>
-          <div className="canvas-node-head"><span>{config.kind === 'ai' ? '✦' : config.kind === 'dom' ? '⌖' : config.kind === 'condition' ? '◇' : config.kind === 'loop' ? '↻' : '●'}</span><strong>{config.name}</strong></div>
+          <div className="canvas-node-head"><span>{config.kind === 'ai' ? '✦' : config.kind === 'dom' ? '⌖' : config.kind === 'loop' ? '↻' : '●'}</span><strong>{config.name}</strong></div>
           <div className="canvas-node-body"><em>{NODE_KIND_LABELS[config.kind]}</em><p>{nodeSummary(config)}</p></div>
           <div className="canvas-node-ports">{outputs.map((port) => <span key={port.portID} className={`port-${port.portID}`}>{PORT_LABELS[port.portID!]}</span>)}</div>
         </>;

@@ -2,7 +2,7 @@
 
 Page Agent 把传统网页中的操作流程固化为可复用的 **Action** 和 **Script**。模型调用时只需选择并运行已有能力，不必每次通过 CDP 抓取整页 DOM、重新理解页面再执行。
 
-## 当前能力（v0.2）
+## 当前能力（v0.3）
 
 - Chrome/Edge Manifest V3 Side Panel，执行模式与编排模式分离
 - Select 工具：进入无事件响应的页面选择状态，悬停高亮并生成稳定 selector
@@ -11,7 +11,7 @@ Page Agent 把传统网页中的操作流程固化为可复用的 **Action** 和
 - AI Provider：支持 OpenAI、火山方舟 Ark、DeepSeek 和自定义 OpenAI-compatible API
 - AI 节点：真实调用已配置模型进行分析，可返回结构化 output、调用 Action 或操作具名 selector 输入
 - AI 输入列表：可从网页 Selector、已有节点或固定文本添加，支持单节点和列表读取
-- 条件节点：等于、不等于、包含、存在、大于和小于；提供“是/否/失败”端口
+- 卡片结果判断：作为执行节点属性配置等于、不等于、包含、存在、大于和小于；判断结果决定走成功或失败出口
 - 循环节点：遍历数组、当前项/索引变量、最大次数和“遍历/完成/失败”端口
 - 所有可执行节点都有“成功/失败”端口；失败分支存在时会进入恢复流程
 - Action：保存一组通用步骤，并可被其他流程复用
@@ -46,7 +46,7 @@ API Key 不会进入工作流 JSON、Action、Script 或 MCP 的 `get_page_agent
 4. 在 FlowGram 画布中选择节点，通过属性面板配置“输入内容”“点击”等事件。
 5. 从输出端口拖线到下一个节点；成功与失败可以连接不同路径。
 6. AI 节点的输入可以通过 Selector 工具采集，也可以选择已有节点或添加文本。
-7. 条件节点用“是/否”端口分支；循环节点的“遍历”分支末端需要连回循环节点，“完成”端口进入后续流程。
+7. 每张执行卡片默认有“成功/失败”出口；需要判断返回值时，在卡片属性中启用“结果判断”，不满足就走失败出口。循环节点的“遍历”分支末端需要连回循环节点，“完成”出口进入后续流程。
 8. 点击“运行画布”验证，再保存为 Action 或 Script。
 
 ## MCP 接入
@@ -92,6 +92,6 @@ MCP Server 启动后监听 `127.0.0.1:17373`；插件后台会自动连接。连
 
 ## 设计边界
 
-FlowGram 仅作为画布和节点编辑层使用。它的官方 Runtime 仍定位为早期参考实现，因此 Page Agent 使用自己的 Chrome 图运行时执行 DOM、Action、失败分支、条件和循环。这样不会把浏览器执行稳定性绑定到上游 Runtime 的 API 变更。
+FlowGram 仅作为画布和节点编辑层使用。它的官方 Runtime 仍定位为早期参考实现，因此 Page Agent 使用自己的 Chrome 图运行时执行 DOM、Action、卡片结果判断、失败分支和循环。这样不会把浏览器执行稳定性绑定到上游 Runtime 的 API 变更。
 
 当前 Provider 使用 OpenAI-compatible Chat Completions 协议。Anthropic 原生 Messages、Gemini 原生 API 等非兼容协议可以在后续通过 Provider Adapter 扩展。

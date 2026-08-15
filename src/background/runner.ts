@@ -2,7 +2,7 @@ import { invokeAiNode } from './ai-provider';
 import { loadWorkspace, saveWorkspace } from '@/shared/storage';
 import type { AiInvocationInput } from '@/types/provider';
 import type {
-  ActionDefinition, AiNode, ConditionNode, EdgePort, LoopNode, RunResult, StepResult,
+  ActionDefinition, AiNode, EdgePort, LoopNode, OutcomeCondition, RunResult, StepResult,
   WorkflowEdge, WorkflowNode,
 } from '@/types/workflow';
 
@@ -43,10 +43,12 @@ export async function sendToFrame(tabId: number, frameId: number, message: unkno
   }
 }
 
-export function testCondition(node: ConditionNode, variables: Variables, context: RuntimeContext): boolean {
-  const left = resolveValue(node.left, variables, context);
-  const right = resolveValue(node.right, variables, context);
-  switch (node.operator) {
+export function testOutcomeCondition(condition: OutcomeCondition, variables: Variables, context: RuntimeContext, nodeResult: unknown): boolean {
+  const resultRecord = nodeResult && typeof nodeResult === 'object' ? nodeResult as Record<string, unknown> : { output: nodeResult };
+  const localVariables = { ...variables, result: resultRecord, output: resultRecord.output, decision: resultRecord.decision };
+  const left = resolveValue(condition.left, localVariables, context);
+  const right = resolveValue(condition.right, localVariables, context);
+  switch (condition.operator) {
     case 'equals': return String(left) === String(right);
     case 'notEquals': return String(left) !== String(right);
     case 'contains': return Array.isArray(left) ? left.includes(right) : String(left ?? '').includes(String(right ?? ''));
@@ -93,10 +95,6 @@ async function executeAtomic(
   if (node.kind === 'wait') {
     await new Promise((resolve) => setTimeout(resolve, Math.max(0, Math.min(node.durationMs, 60_000))));
     return { data: node.durationMs, port: 'success' };
-  }
-  if (node.kind === 'condition') {
-    const matched = testCondition(node, variables, context);
-    return { data: matched, port: matched ? 'true' : 'false' };
   }
   if (node.kind === 'action') {
     if (stack.includes(node.actionId)) throw new Error(`Action 循环调用：${[...stack, node.actionId].join(' → ')}`);
@@ -194,19 +192,24 @@ async function runGraphInternal(
         context[current.name] = current.kind === 'ai' && result.data && typeof result.data === 'object'
           ? { ok: true, ...(result.data as Record<string, unknown>), output: (result.data as { output?: unknown }).output }
           : { ok: true, output: result.data, data: result.data };
-        steps.push({ ok: true, nodeId: current.id, message: `${current.name}执行成功`, data: result.data, outputPort: port });
+        const conditionPassed: boolean = !current.outcomeCondition?.enabled
+          || testOutcomeCondition(current.outcomeCondition, variables, context, context[current.name]);
+        port = conditionPassed ? 'success' : 'failure';
+        steps.push({ ok: conditionPassed, nodeId: current.id, message: conditionPassed ? `${current.name}执行成功` : `${current.name}结果判断未通过`, data: result.data, outputPort: port });
         if (result.nested?.length) steps.push(...result.nested);
+        if (!conditionPassed && !edges.some((edge) => edge.sourceNodeId === current!.id && edge.sourcePort === 'failure')) {
+          return { ok: false, steps, error: `${current.name}结果判断未通过，且未连接失败分支` };
+        }
       }
     } catch (error) {
       port = 'failure';
       context[current.name] = { ok: false, error: (error as Error).message };
       steps.push({ ok: false, nodeId: current.id, message: (error as Error).message, outputPort: port });
       const failureEdge = edges.find((edge) => edge.sourceNodeId === current!.id && edge.sourcePort === 'failure');
-      if (!failureEdge && !current.continueOnError) return { ok: false, steps, error: (error as Error).message };
-      if (!failureEdge && current.continueOnError) port = 'success';
+      if (!failureEdge) return { ok: false, steps, error: (error as Error).message };
     }
 
-    const nextEdge = edges.find((edge) => edge.sourceNodeId === current!.id && edge.sourcePort === port)
+    const nextEdge: WorkflowEdge | undefined = edges.find((edge) => edge.sourceNodeId === current!.id && edge.sourcePort === port)
       ?? (port === 'success' ? edges.find((edge) => edge.sourceNodeId === current!.id && edge.sourcePort === 'success') : undefined);
     if (nextEdge && !byId.has(nextEdge.targetNodeId)) return { ok: false, steps, error: `连线目标节点不存在：${nextEdge.targetNodeId}` };
     current = nextEdge ? byId.get(nextEdge.targetNodeId) : undefined;

@@ -17,9 +17,9 @@ describe('workflow contract', () => {
     expect(Object.keys(EVENT_LABELS)).toHaveLength(12);
   });
 
-  it('exposes branch and loop nodes as first-class workflow types', () => {
-    expect(NODE_KIND_LABELS.condition).toBe('条件分支');
+  it('keeps conditions as card outcomes and loops as first-class nodes', () => {
     expect(NODE_KIND_LABELS.loop).toBe('循环');
-    expect(Object.keys(NODE_KIND_LABELS)).toEqual(expect.arrayContaining(['dom', 'ai', 'condition', 'loop']));
+    expect(Object.keys(NODE_KIND_LABELS)).toEqual(expect.arrayContaining(['dom', 'ai', 'loop']));
+    expect(Object.keys(NODE_KIND_LABELS)).not.toContain('condition');
   });
 });
