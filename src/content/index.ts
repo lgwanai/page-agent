@@ -21,13 +21,14 @@ if (!(window as Window & { __pageAgentLoaded?: boolean }).__pageAgentLoaded) {
       return false;
     }
     if (message.type === 'PAGE_AGENT_EXECUTE_EVENT') {
-      const element = document.querySelector<HTMLElement>(message.selector);
+      const matched = document.querySelector(message.selector);
+      const element = matched instanceof HTMLElement ? matched : undefined;
       if (!element) {
-        sendResponse({ ok: false, error: `节点不存在：${message.selector}` });
+        sendResponse({ ok: false, error: matched ? `Selector 命中的节点不是可操作的 HTML 元素：${message.selector}` : `节点不存在：${message.selector}` });
         return false;
       }
       void executeEvent(element, message.event)
-        .then((data) => sendResponse({ ok: true, data }))
+        .then(({ output, verification }) => sendResponse({ ok: verification.ok, data: output, verification, error: verification.ok ? undefined : verification.summary }))
         .catch((error: Error) => sendResponse({ ok: false, error: error.message }));
       return true;
     }
@@ -35,7 +36,7 @@ if (!(window as Window & { __pageAgentLoaded?: boolean }).__pageAgentLoaded) {
       try {
         const element = resolveSemanticTarget(message.instruction, message.scopeSelector);
         void executeEvent(element, message.event)
-          .then((data) => sendResponse({ ok: true, data, selector: element.tagName.toLowerCase(), text: element.innerText?.slice(0, 120) }))
+          .then(({ output, verification }) => sendResponse({ ok: verification.ok, data: output, verification, selector: element.tagName.toLowerCase(), text: element.innerText?.slice(0, 120), error: verification.ok ? undefined : verification.summary }))
           .catch((error: Error) => sendResponse({ ok: false, error: error.message }));
       } catch (error) {
         sendResponse({ ok: false, error: (error as Error).message });

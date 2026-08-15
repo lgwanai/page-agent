@@ -2,7 +2,7 @@ import { invokeAiNode } from './ai-provider';
 import { loadWorkspace, saveWorkspace } from '@/shared/storage';
 import type { AiInvocationInput } from '@/types/provider';
 import type {
-  ActionDefinition, AiNode, EdgePort, LoopNode, OutcomeCondition, RunResult, StepResult,
+  ActionDefinition, AiNode, EdgePort, ExecutionVerification, LoopNode, RunResult, StepResult,
   WorkflowEdge, WorkflowNode,
 } from '@/types/workflow';
 
@@ -43,21 +43,6 @@ export async function sendToFrame(tabId: number, frameId: number, message: unkno
   }
 }
 
-export function testOutcomeCondition(condition: OutcomeCondition, variables: Variables, context: RuntimeContext, nodeResult: unknown): boolean {
-  const resultRecord = nodeResult && typeof nodeResult === 'object' ? nodeResult as Record<string, unknown> : { output: nodeResult };
-  const localVariables = { ...variables, result: resultRecord, output: resultRecord.output, decision: resultRecord.decision };
-  const left = resolveValue(condition.left, localVariables, context);
-  const right = resolveValue(condition.right, localVariables, context);
-  switch (condition.operator) {
-    case 'equals': return String(left) === String(right);
-    case 'notEquals': return String(left) !== String(right);
-    case 'contains': return Array.isArray(left) ? left.includes(right) : String(left ?? '').includes(String(right ?? ''));
-    case 'exists': return left !== undefined && left !== null && left !== '';
-    case 'greaterThan': return Number(left) > Number(right);
-    case 'lessThan': return Number(left) < Number(right);
-  }
-}
-
 async function collectAiInputs(tabId: number, node: AiNode, nodes: WorkflowNode[], variables: Variables, context: RuntimeContext): Promise<AiInvocationInput[]> {
   const inputs: AiInvocationInput[] = [];
   for (const input of node.inputs) {
@@ -81,7 +66,7 @@ async function collectAiInputs(tabId: number, node: AiNode, nodes: WorkflowNode[
   return inputs;
 }
 
-interface AtomicResult { data?: unknown; port: EdgePort; nested?: StepResult[] }
+interface AtomicResult { data?: unknown; port: EdgePort; nested?: StepResult[]; verification?: ExecutionVerification }
 
 async function executeAtomic(
   tabId: number,
@@ -109,8 +94,10 @@ async function executeAtomic(
     const response = await sendToFrame(tabId, node.target.frameId ?? 0, {
       type: 'PAGE_AGENT_EXECUTE_EVENT', selector: interpolate(node.target.selector, variables, context), event,
     });
-    if (!response.ok) throw new Error(String(response.error ?? '页面执行失败'));
-    return { data: response.data, port: 'success' };
+    if (!response.ok) throw Object.assign(new Error(String(response.error ?? '页面执行失败')), {
+      verification: response.verification as ExecutionVerification | undefined,
+    });
+    return { data: response.data, port: 'success', verification: response.verification as ExecutionVerification | undefined };
   }
 
   const inputs = await collectAiInputs(tabId, node, nodes, variables, context);
@@ -123,7 +110,9 @@ async function executeAtomic(
     const response = await sendToFrame(tabId, binding.target.frameId ?? 0, {
       type: 'PAGE_AGENT_EXECUTE_EVENT', selector: binding.target.selector, event: invocation.event,
     });
-    if (!response.ok) throw new Error(String(response.error ?? 'AI 事件执行失败'));
+    if (!response.ok) throw Object.assign(new Error(String(response.error ?? 'AI 事件执行失败')), {
+      verification: response.verification as ExecutionVerification | undefined,
+    });
   }
   if (invocation?.kind === 'action') {
     const action = actions.find((item) => item.name === invocation.actionName || item.id === invocation.actionName);
@@ -192,21 +181,23 @@ async function runGraphInternal(
         context[current.name] = current.kind === 'ai' && result.data && typeof result.data === 'object'
           ? { ok: true, ...(result.data as Record<string, unknown>), output: (result.data as { output?: unknown }).output }
           : { ok: true, output: result.data, data: result.data };
-        const conditionPassed: boolean = !current.outcomeCondition?.enabled
-          || testOutcomeCondition(current.outcomeCondition, variables, context, context[current.name]);
-        port = conditionPassed ? 'success' : 'failure';
-        steps.push({ ok: conditionPassed, nodeId: current.id, message: conditionPassed ? `${current.name}执行成功` : `${current.name}结果判断未通过`, data: result.data, outputPort: port });
+        steps.push({
+          ok: true,
+          nodeId: current.id,
+          message: result.verification?.summary ?? `${current.name}执行成功`,
+          data: result.data,
+          verification: result.verification,
+          outputPort: port,
+        });
         if (result.nested?.length) steps.push(...result.nested);
-        if (!conditionPassed && !edges.some((edge) => edge.sourceNodeId === current!.id && edge.sourcePort === 'failure')) {
-          return { ok: false, steps, error: `${current.name}结果判断未通过，且未连接失败分支` };
-        }
       }
     } catch (error) {
+      const executionError = error as Error & { verification?: ExecutionVerification };
       port = 'failure';
-      context[current.name] = { ok: false, error: (error as Error).message };
-      steps.push({ ok: false, nodeId: current.id, message: (error as Error).message, outputPort: port });
+      context[current.name] = { ok: false, error: executionError.message, verification: executionError.verification };
+      steps.push({ ok: false, nodeId: current.id, message: executionError.message, verification: executionError.verification, outputPort: port });
       const failureEdge = edges.find((edge) => edge.sourceNodeId === current!.id && edge.sourcePort === 'failure');
-      if (!failureEdge) return { ok: false, steps, error: (error as Error).message };
+      if (!failureEdge) return { ok: false, steps, error: executionError.message };
     }
 
     const nextEdge: WorkflowEdge | undefined = edges.find((edge) => edge.sourceNodeId === current!.id && edge.sourcePort === port)

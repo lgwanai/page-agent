@@ -5,6 +5,7 @@ import { loadProvider, saveProvider } from '@/shared/provider-storage';
 import { testProvider } from './ai-provider';
 import { connectBridge } from './bridge';
 import { runAction, runGraph, runNodes, runScript } from './runner';
+import { sendSelectorToFrames } from './selector-messaging';
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => undefined);
@@ -22,6 +23,19 @@ async function getActiveTab(): Promise<chrome.tabs.Tab> {
 async function sendAllFrames(message: RuntimeMessage): Promise<void> {
   const tab = await getActiveTab();
   const frames = await chrome.webNavigation.getAllFrames({ tabId: tab.id! });
+  if (message.type === 'PAGE_AGENT_START_SELECT' || message.type === 'PAGE_AGENT_STOP_SELECT') {
+    const manifest = chrome.runtime.getManifest() as ReturnType<typeof chrome.runtime.getManifest> & {
+      content_scripts?: Array<{ js?: string[] }>;
+    };
+    const contentScriptFiles = (manifest.content_scripts ?? []).flatMap((entry) => entry.js ?? []);
+    await sendSelectorToFrames(frames ?? [{ frameId: 0 }], message, {
+      contentScriptFiles,
+      send: (frameId, selectorMessage) => chrome.tabs.sendMessage(tab.id!, selectorMessage, { frameId }),
+      inject: (frameId, files) => chrome.scripting.executeScript({ target: { tabId: tab.id!, frameIds: [frameId] }, files }),
+    });
+    return;
+  }
+
   await Promise.all((frames ?? [{ frameId: 0 }]).map(async ({ frameId }) => {
     try { await chrome.tabs.sendMessage(tab.id!, message, { frameId }); }
     catch { /* restricted or not-yet-loaded frames are ignored */ }

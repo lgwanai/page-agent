@@ -31,7 +31,7 @@ function nodeSummary(node: WorkflowNode): string {
   else if (node.kind === 'loop') summary = `遍历 ${node.items || '未配置数组'}`;
   else if (node.kind === 'wait') summary = `${node.durationMs}ms`;
   else summary = '调用已保存 Action';
-  return node.outcomeCondition?.enabled ? `${summary} · 结果判断` : summary;
+  return summary;
 }
 
 function CanvasNodeForm() {

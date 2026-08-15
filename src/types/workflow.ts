@@ -32,7 +32,6 @@ interface BaseNode {
   id: string;
   name: string;
   position?: { x: number; y: number };
-  outcomeCondition?: OutcomeCondition;
 }
 
 export interface DomNode extends BaseNode {
@@ -71,15 +70,6 @@ export interface ActionNode extends BaseNode {
 export interface WaitNode extends BaseNode {
   kind: 'wait';
   durationMs: number;
-}
-
-export type ConditionOperator = 'equals' | 'notEquals' | 'contains' | 'exists' | 'greaterThan' | 'lessThan';
-
-export interface OutcomeCondition {
-  enabled: boolean;
-  left: string;
-  operator: ConditionOperator;
-  right?: string;
 }
 
 export interface LoopNode extends BaseNode {
@@ -135,7 +125,16 @@ export interface StepResult {
   nodeId: string;
   message: string;
   data?: unknown;
+  verification?: ExecutionVerification;
   outputPort?: EdgePort;
+}
+
+export interface ExecutionVerification {
+  ok: boolean;
+  summary: string;
+  expected?: unknown;
+  actual?: unknown;
+  evidence?: string[];
 }
 
 export interface RunResult {

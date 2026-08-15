@@ -70,6 +70,10 @@ function elementLabel(element: Element): string {
     .slice(0, 80);
 }
 
+function selectionTarget(element: Element): Element {
+  return element.closest('button,a,input,textarea,select,option,label,summary,[role="button"],[role="link"],[role="option"],[role="menuitem"],[onclick]') ?? element;
+}
+
 function describe(element: Element): Omit<PageTarget, 'frameId'> {
   const attributes: Record<string, string> = {};
   for (const key of ['id', 'name', 'type', 'role', 'aria-label', 'placeholder', 'data-testid']) {
@@ -122,7 +126,12 @@ export function startSelecting(onSelect: (target: Omit<PageTarget, 'frameId'>) =
     return element;
   };
   const move = (event: PointerEvent) => {
-    hovered = underlying(event.clientX, event.clientY);
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (overlay.style.pointerEvents === 'none' && event.target instanceof HTMLIFrameElement) return;
+    overlay.style.pointerEvents = 'auto';
+    const rawTarget = underlying(event.clientX, event.clientY);
+    hovered = rawTarget ? selectionTarget(rawTarget) : null;
     if (!hovered) return;
     const rect = hovered.getBoundingClientRect();
     Object.assign(highlight.style, {
@@ -134,11 +143,13 @@ export function startSelecting(onSelect: (target: Omit<PageTarget, 'frameId'>) =
     tooltip.style.top = `${top}px`;
     // Let the selector overlay inside a same- or cross-origin iframe receive the pointer.
     // The parent document keeps a capture blocker below, so leaving the iframe cannot trigger page handlers.
-    if (hovered instanceof HTMLIFrameElement && window.top === window) overlay.style.pointerEvents = 'none';
+    if (hovered instanceof HTMLIFrameElement) overlay.style.pointerEvents = 'none';
   };
   const click = (event: MouseEvent) => {
     event.preventDefault();
     event.stopImmediatePropagation();
+    const rawTarget = hovered ? null : underlying(event.clientX, event.clientY);
+    hovered ??= rawTarget ? selectionTarget(rawTarget) : null;
     if (!hovered) return;
     const selected = describe(hovered);
     stopSelecting();
@@ -153,29 +164,24 @@ export function startSelecting(onSelect: (target: Omit<PageTarget, 'frameId'>) =
     event.preventDefault();
     event.stopImmediatePropagation();
   };
-  const restoreAfterFrame = (event: PointerEvent) => {
-    if (overlay.style.pointerEvents !== 'none') return;
-    if (event.target instanceof HTMLIFrameElement) return;
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    overlay.style.pointerEvents = 'auto';
-  };
-  overlay.addEventListener('pointermove', move);
-  overlay.addEventListener('click', click, true);
-  for (const type of ['pointerdown', 'mousedown', 'mouseup', 'dblclick', 'contextmenu', 'wheel', 'touchstart']) {
-    overlay.addEventListener(type, block, { capture: true, passive: false });
+  const blockedEvents = [
+    'pointerdown', 'pointerup', 'mousedown', 'mouseup', 'auxclick', 'dblclick', 'contextmenu',
+    'wheel', 'touchstart', 'touchmove', 'touchend', 'dragstart', 'drop', 'submit',
+  ];
+  window.addEventListener('pointermove', move, { capture: true, passive: false });
+  window.addEventListener('click', click, { capture: true, passive: false });
+  for (const type of blockedEvents) {
+    window.addEventListener(type, block, { capture: true, passive: false });
   }
-  window.addEventListener('pointermove', restoreAfterFrame, true);
   window.addEventListener('keydown', keydown, true);
   document.documentElement.append(highlight, overlay, tooltip);
 
   cleanupActiveSelector = () => {
-    overlay.removeEventListener('pointermove', move);
-    overlay.removeEventListener('click', click, true);
-    for (const type of ['pointerdown', 'mousedown', 'mouseup', 'dblclick', 'contextmenu', 'wheel', 'touchstart']) {
-      overlay.removeEventListener(type, block, true);
+    window.removeEventListener('pointermove', move, true);
+    window.removeEventListener('click', click, true);
+    for (const type of blockedEvents) {
+      window.removeEventListener(type, block, true);
     }
-    window.removeEventListener('pointermove', restoreAfterFrame, true);
     window.removeEventListener('keydown', keydown, true);
     overlay.remove(); highlight.remove(); tooltip.remove();
   };

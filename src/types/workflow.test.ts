@@ -17,7 +17,7 @@ describe('workflow contract', () => {
     expect(Object.keys(EVENT_LABELS)).toHaveLength(12);
   });
 
-  it('keeps conditions as card outcomes and loops as first-class nodes', () => {
+  it('keeps loops as first-class nodes without standalone conditions', () => {
     expect(NODE_KIND_LABELS.loop).toBe('循环');
     expect(Object.keys(NODE_KIND_LABELS)).toEqual(expect.arrayContaining(['dom', 'ai', 'loop']));
     expect(Object.keys(NODE_KIND_LABELS)).not.toContain('condition');

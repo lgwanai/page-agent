@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { ExtensionBridge } from './bridge.js';
 
 const bridge = new ExtensionBridge(Number(process.env.PAGE_AGENT_BRIDGE_PORT || 17373));
-const server = new McpServer({ name: 'page-agent', version: '0.2.0' });
+const server = new McpServer({ name: 'page-agent', version: '0.4.0' });
 
 function text(value: unknown) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }] };
@@ -63,7 +63,7 @@ server.registerTool('run_page_action', {
 });
 
 server.registerTool('get_page_agent_workspace', {
-  description: '读取 Page Agent 当前的 Action、Script 与编排草稿定义。用于理解已有网页能力，不会抓取目标网页 DOM。',
+  description: '读取 Page Agent 已保存的 Action 与 Script 定义。未保存的编辑内容不会持久化或通过 MCP 暴露，也不会抓取目标网页 DOM。',
   inputSchema: {},
 }, async () => {
   try { return text(await bridge.request('get_state')); }

@@ -1,12 +1,9 @@
 import {
   createId, EVENT_LABELS, NODE_KIND_LABELS, type ActionDefinition, type AiInputBinding,
-  type ConditionOperator, type EventDefinition, type OutcomeCondition, type WorkflowNode,
+  type EventDefinition, type WorkflowNode,
 } from '@/types/workflow';
 
 const eventOptions = Object.entries(EVENT_LABELS) as Array<[EventDefinition['type'], string]>;
-const conditionOptions: Array<[ConditionOperator, string]> = [
-  ['equals', '等于'], ['notEquals', '不等于'], ['contains', '包含'], ['exists', '存在'], ['greaterThan', '大于'], ['lessThan', '小于'],
-];
 
 export function NodeInspector({ node, nodes, actions, onChange, onDelete, onRun, onPickAiSelector, notify }: {
   node: WorkflowNode | undefined;
@@ -41,9 +38,6 @@ export function NodeInspector({ node, nodes, actions, onChange, onDelete, onRun,
     if (node.kind !== 'ai') return;
     onChange({ ...node, inputs: node.inputs.map((input) => input.id === id ? { ...input, ...patch } : input) });
   };
-  const outcomeCondition: OutcomeCondition = node.outcomeCondition ?? { enabled: false, left: '{{output}}', operator: 'exists' };
-  const updateOutcome = (patch: Partial<OutcomeCondition>) => onChange({ ...node, outcomeCondition: { ...outcomeCondition, ...patch } });
-
   return <aside className="node-inspector">
     <div className="inspector-head"><div><strong>{NODE_KIND_LABELS[node.kind]}</strong><span>{node.id}</span></div><div><button className="icon-btn" title="运行节点" onClick={onRun}>▶</button><button className="icon-btn danger" title="删除节点" onClick={onDelete}>×</button></div></div>
     <label>节点名称<input value={node.name} onChange={(event) => updateName(event.target.value)} /><small>在 AI 输入和 `{'{{节点名.output}}'}` 表达式中使用，必须唯一。</small></label>
@@ -67,7 +61,7 @@ export function NodeInspector({ node, nodes, actions, onChange, onDelete, onRun,
         </div>)}
         <div className="input-actions"><button className="secondary" onClick={onPickAiSelector}>⌖ Selector 输入</button><button className="secondary" onClick={addNodeInput}>节点输入</button><button className="secondary" onClick={addLiteralInput}>文本输入</button></div>
       </div>
-      <div className="ai-behavior"><strong>模型可执行的动作</strong><p>AI 可以返回一个输入 selector 上的事件，或按准确名称调用已保存 Action。返回的 output 可以直接由本卡片的结果判断决定走成功还是失败。</p></div>
+      <div className="ai-behavior"><strong>模型可执行的动作</strong><p>AI 可以返回一个输入 selector 上的事件，或按准确名称调用已保存 Action。被调用的网页操作会自动验收执行结果。</p></div>
     </>}
 
     {node.kind === 'loop' && <>
@@ -79,15 +73,7 @@ export function NodeInspector({ node, nodes, actions, onChange, onDelete, onRun,
 
     {node.kind === 'wait' && <label>等待毫秒<input type="number" min="0" max="60000" value={node.durationMs} onChange={(event) => onChange({ ...node, durationMs: Number(event.target.value) })} /></label>}
     {node.kind === 'action' && <label>选择 Action<select value={node.actionId} onChange={(event) => onChange({ ...node, actionId: event.target.value })}><option value="">请选择</option>{actions.map((action) => <option value={action.id} key={action.id}>{action.name}</option>)}</select></label>}
-    {node.kind !== 'loop' && <div className="outcome-section">
-      <label className="check-label"><input type="checkbox" checked={outcomeCondition.enabled} onChange={(event) => updateOutcome({ enabled: event.target.checked })} />启用结果判断</label>
-      {outcomeCondition.enabled && <>
-        <label>判断值 / 表达式<input value={outcomeCondition.left} placeholder="{{output.status}}" onChange={(event) => updateOutcome({ left: event.target.value })} /></label>
-        <label>判断方式<select value={outcomeCondition.operator} onChange={(event) => updateOutcome({ operator: event.target.value as ConditionOperator })}>{conditionOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-        {outcomeCondition.operator !== 'exists' && <label>比较值<input value={outcomeCondition.right ?? ''} placeholder="支持常量或 {{变量}}" onChange={(event) => updateOutcome({ right: event.target.value })} /></label>}
-      </>}
-      <div className="port-help">执行异常或结果判断不满足时走失败出口；没有失败连线则终止流程。</div>
-    </div>}
+    {node.kind !== 'loop' && <div className="port-help"><strong>自动验收</strong><br />Page Agent 会根据操作类型检查真实页面状态；结果符合预期走成功出口，否则走失败出口。没有失败连线时终止流程。</div>}
   </aside>;
 }
 
