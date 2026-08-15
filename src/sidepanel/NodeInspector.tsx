@@ -1,9 +1,7 @@
 import {
-  createId, EVENT_LABELS, NODE_KIND_LABELS, type ActionDefinition, type AiInputBinding,
-  type EventDefinition, type WorkflowNode,
+  allowedEventsForTarget, createId, EVENT_LABELS, NODE_KIND_LABELS, type ActionDefinition,
+  type AiInputBinding, type EventDefinition, type PageTarget, type WorkflowNode,
 } from '@/types/workflow';
-
-const eventOptions = Object.entries(EVENT_LABELS) as Array<[EventDefinition['type'], string]>;
 
 export function NodeInspector({ node, nodes, actions, onChange, onDelete, onRun, onPickAiSelector, notify }: {
   node: WorkflowNode | undefined;
@@ -46,7 +44,7 @@ export function NodeInspector({ node, nodes, actions, onChange, onDelete, onRun,
       <label>Selector 名称<input value={node.target.name} onChange={(event) => updateName(event.target.value)} /></label>
       <label>Selector<textarea className="code-input" value={node.target.selector} onChange={(event) => onChange({ ...node, target: { ...node.target, selector: event.target.value } })} /></label>
       <div className="field-grid"><label>元素类型<input value={node.target.tagName} disabled /></label><label>Frame<input value={node.target.frameId} disabled /></label></div>
-      <EventEditor event={node.event} onChange={updateEvent} />
+      <EventEditor target={node.target} event={node.event} onChange={updateEvent} />
     </>}
 
     {node.kind === 'ai' && <>
@@ -77,9 +75,21 @@ export function NodeInspector({ node, nodes, actions, onChange, onDelete, onRun,
   </aside>;
 }
 
-function EventEditor({ event, onChange }: { event: EventDefinition; onChange: (patch: Partial<EventDefinition>) => void }) {
-  return <><label>操作<select value={event.type} onChange={(item) => onChange({ type: item.target.value as EventDefinition['type'] })}>{eventOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-    {['input', 'select', 'check', 'pressKey', 'custom'].includes(event.type) && <label>操作值<input value={event.value ?? ''} placeholder="支持 {{变量}}" onChange={(item) => onChange({ value: item.target.value })} /></label>}
-    {event.type === 'custom' && <label>自定义事件名<input value={event.customEvent ?? ''} onChange={(item) => onChange({ customEvent: item.target.value })} /></label>}
+function EventEditor({ target, event, onChange }: {
+  target: PageTarget;
+  event: EventDefinition;
+  onChange: (patch: Partial<EventDefinition>) => void;
+}) {
+  const options = allowedEventsForTarget(target);
+  const changeType = (type: EventDefinition['type']) => onChange({ type, value: undefined, customEvent: undefined });
+  return <>
+    <label>操作<select value={event.type} onChange={(item) => changeType(item.target.value as EventDefinition['type'])}>{options.map((value) => <option key={value} value={value}>{EVENT_LABELS[value]}</option>)}</select><small>已根据 {target.tagName}{target.attributes?.type ? ` · ${target.attributes.type}` : ''} 元素筛选可用操作。</small></label>
+    {event.type === 'input' && <label>输入内容<input value={event.value ?? ''} placeholder="支持 {{变量}}" onChange={(item) => onChange({ value: item.target.value })} /></label>}
+    {event.type === 'select' && <label>选择选项{target.options?.length
+      ? <select value={event.value ?? ''} onChange={(item) => onChange({ value: item.target.value })}><option value="">请选择</option>{event.value && !target.options.some((option) => option.value === event.value) && <option value={event.value}>{event.value}（动态值）</option>}{target.options.map((option, index) => <option key={`${option.value}_${index}`} value={option.value}>{option.label || option.value}</option>)}</select>
+      : <input value={event.value ?? ''} placeholder="选项 value 或 {{变量}}" onChange={(item) => onChange({ value: item.target.value })} />}</label>}
+    {event.type === 'check' && <label>目标状态<select value={event.value ?? ''} onChange={(item) => onChange({ value: item.target.value || undefined })}><option value="">切换当前状态</option><option value="true">勾选</option><option value="false">取消勾选</option></select></label>}
+    {event.type === 'pressKey' && <label>按键<input value={event.value ?? ''} placeholder="Enter、Escape 或 {{变量}}" onChange={(item) => onChange({ value: item.target.value })} /></label>}
+    {event.type === 'custom' && <><label>自定义事件名<input value={event.customEvent ?? ''} onChange={(item) => onChange({ customEvent: item.target.value })} /></label><label>事件数据<input value={event.value ?? ''} placeholder="可选，支持 {{变量}}" onChange={(item) => onChange({ value: item.target.value })} /></label></>}
   </>;
 }

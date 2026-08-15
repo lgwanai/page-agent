@@ -71,15 +71,21 @@ function elementLabel(element: Element): string {
 }
 
 function selectionTarget(element: Element): Element {
-  return element.closest('button,a,input,textarea,select,option,label,summary,[role="button"],[role="link"],[role="option"],[role="menuitem"],[onclick]') ?? element;
+  return element.closest('button,a,input,textarea,select,option,label,summary,[contenteditable="true"],[role="button"],[role="link"],[role="option"],[role="menuitem"],[onclick]') ?? element;
 }
 
 function describe(element: Element): Omit<PageTarget, 'frameId'> {
   const attributes: Record<string, string> = {};
-  for (const key of ['id', 'name', 'type', 'role', 'aria-label', 'placeholder', 'data-testid']) {
+  for (const key of ['id', 'name', 'type', 'role', 'aria-label', 'placeholder', 'data-testid', 'contenteditable', 'disabled', 'multiple', 'tabindex']) {
     const value = element.getAttribute(key);
-    if (value) attributes[key] = value;
+    if (value !== null) attributes[key] = value;
   }
+  const options = element instanceof HTMLSelectElement
+    ? [...element.options].slice(0, 200).map((option) => ({
+      value: option.value,
+      label: (option.textContent ?? option.value).replace(/\s+/g, ' ').trim(),
+    }))
+    : undefined;
   return {
     name: '',
     selector: selectorFor(element),
@@ -87,6 +93,7 @@ function describe(element: Element): Omit<PageTarget, 'frameId'> {
     label: elementLabel(element),
     text: (element.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 160),
     attributes,
+    ...(options ? { options } : {}),
   };
 }
 

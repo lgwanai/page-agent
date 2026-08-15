@@ -4,7 +4,7 @@ import { createRoot } from 'react-dom/client';
 import type { RuntimeMessage, RuntimeResponse } from '@/types/messages';
 import type { AiProviderConfig } from '@/types/provider';
 import {
-  createId, type ActionDefinition, type AiInputBinding, type PageTarget, type RunResult,
+  createId, defaultEventForTarget, type ActionDefinition, type AiInputBinding, type PageTarget, type RunResult,
   type ScriptDefinition, type WorkflowEdge, type WorkflowNode, type WorkspaceState,
 } from '@/types/workflow';
 import { EMPTY_WORKSPACE } from '@/shared/storage';
@@ -16,6 +16,8 @@ import './styles.css';
 type Mode = 'run' | 'compose';
 type SelectPurpose = { kind: 'node'; source?: { nodeId: string; port: WorkflowEdge['sourcePort'] } } | { kind: 'ai-input'; nodeId: string };
 type EditingDefinition = { type: 'action' | 'script'; id: string; name: string };
+type CreatableNodeKind = 'dom' | 'ai' | 'loop' | 'wait';
+type PortMenu = { nodeId: string; port: WorkflowEdge['sourcePort']; x: number; y: number };
 
 async function send<T = RuntimeResponse>(message: RuntimeMessage): Promise<T> {
   return chrome.runtime.sendMessage(message) as Promise<T>;
@@ -55,6 +57,7 @@ function App() {
   const [bridgeConnected, setBridgeConnected] = useState(false);
   const [providerConfigured, setProviderConfigured] = useState(false);
   const [showProvider, setShowProvider] = useState(false);
+  const [portMenu, setPortMenu] = useState<PortMenu | null>(null);
   const notify = useCallback((message: string) => {
     setToast(message);
     window.setTimeout(() => setToast(null), 3000);
@@ -91,7 +94,7 @@ function App() {
           kind: 'dom',
           name,
           target: namedTarget,
-          event: { type: 'click' },
+          event: defaultEventForTarget(namedTarget),
           position: sourceNode
             ? { x: (sourceNode.position?.x ?? 80) + 300, y: (sourceNode.position?.y ?? 80) + offsetY }
             : { x: 80 + state.draft.length * 50, y: 80 + state.draft.length * 30 },
@@ -112,6 +115,15 @@ function App() {
     return () => chrome.runtime.onMessage.removeListener(listener);
   }, [notify, selectPurpose, state.draft]);
 
+  useEffect(() => {
+    if (!portMenu) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setPortMenu(null);
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [portMenu]);
+
   const startSelector = async (purpose: SelectPurpose) => {
     if (selectPurpose) {
       await send({ type: 'PAGE_AGENT_STOP_SELECT' });
@@ -123,27 +135,47 @@ function App() {
     setSelectPurpose(purpose);
   };
 
-  const addFromPort = (nodeId: string, port: WorkflowEdge['sourcePort']) => {
+  const addFromPort = (nodeId: string, port: WorkflowEdge['sourcePort'], point: { x: number; y: number }) => {
     const existing = state.draftEdges.find((edge) => edge.sourceNodeId === nodeId && edge.sourcePort === port);
     if (existing) {
       setSelectedId(existing.targetNodeId);
       notify('这个路径已经连接了后续节点');
       return;
     }
-    void startSelector({ kind: 'node', source: { nodeId, port } });
+    if (selectPurpose) {
+      void send({ type: 'PAGE_AGENT_STOP_SELECT' });
+      setSelectPurpose(null);
+    }
+    setPortMenu({ nodeId, port, x: point.x, y: point.y });
   };
 
-  const addNode = (kind: WorkflowNode['kind']) => {
-    const position = { x: 80 + (state.draft.length % 3) * 280, y: 80 + Math.floor(state.draft.length / 3) * 180 };
-    const name = uniqueName(state.draft, { ai: 'AI判断', action: '调用Action', wait: '等待', loop: '循环', dom: '网页节点' }[kind]);
-    let node: WorkflowNode;
-    if (kind === 'ai') node = { id: createId('ai'), kind, name, instruction: '', inputs: [], event: { type: 'click' }, position };
-    else if (kind === 'loop') node = { id: createId('loop'), kind, name, items: '', itemVariable: 'item', indexVariable: 'index', maxIterations: 100, position };
-    else if (kind === 'wait') node = { id: createId('wait'), kind, name, durationMs: 500, position };
-    else if (kind === 'action') node = { id: createId('action-node'), kind, name, actionId: state.actions[0]?.id ?? '', position };
-    else return;
-    setState({ ...state, draft: [...state.draft, node] });
-    setSelectedId(node.id);
+  const addNode = (kind: Exclude<CreatableNodeKind, 'dom'>, source?: { nodeId: string; port: WorkflowEdge['sourcePort'] }) => {
+    const id = createId(kind);
+    setState((current) => {
+      const sourceNode = source ? current.draft.find((item) => item.id === source.nodeId) : undefined;
+      const offsetY = source?.port === 'failure' ? 150 : source?.port === 'done' ? 130 : source?.port === 'body' ? -30 : 0;
+      const position = sourceNode
+        ? { x: (sourceNode.position?.x ?? 80) + 300, y: (sourceNode.position?.y ?? 80) + offsetY }
+        : { x: 80 + (current.draft.length % 3) * 280, y: 80 + Math.floor(current.draft.length / 3) * 180 };
+      const name = uniqueName(current.draft, { ai: 'AI节点', wait: '等待', loop: '循环' }[kind]);
+      let node: WorkflowNode;
+      if (kind === 'ai') node = { id, kind, name, instruction: '', inputs: [], event: { type: 'click' }, position };
+      else if (kind === 'loop') node = { id, kind, name, items: '', itemVariable: 'item', indexVariable: 'index', maxIterations: 100, position };
+      else node = { id, kind, name, durationMs: 500, position };
+      const edge = source && sourceNode
+        ? { id: createId('edge'), sourceNodeId: source.nodeId, targetNodeId: id, sourcePort: source.port }
+        : null;
+      return { ...current, draft: [...current.draft, node], draftEdges: edge ? [...current.draftEdges, edge] : current.draftEdges };
+    });
+    setSelectedId(id);
+  };
+
+  const choosePortNode = (kind: CreatableNodeKind) => {
+    if (!portMenu) return;
+    const source = { nodeId: portMenu.nodeId, port: portMenu.port };
+    setPortMenu(null);
+    if (kind === 'dom') void startSelector({ kind: 'node', source });
+    else addNode(kind, source);
   };
 
   const updateGraph = useCallback((nodes: WorkflowNode[], edges: WorkflowEdge[]) => {
@@ -179,6 +211,7 @@ function App() {
     if (selectPurpose) void send({ type: 'PAGE_AGENT_STOP_SELECT' });
     setState((current) => ({ ...current, draft: [], draftEdges: [] }));
     setSelectPurpose(null);
+    setPortMenu(null);
     setSelectedId(null);
     setEditing(null);
     setLastRun(null);
@@ -222,11 +255,11 @@ function App() {
   const selectedNode = state.draft.find((node) => node.id === selectedId);
   return <div className="app">
     <header className="app-head"><div className="brand"><span className="logo">P</span><div><strong>Page Agent</strong><small>网页能力编排器</small></div></div><div className="head-actions"><button className={`provider-chip ${providerConfigured ? 'online' : ''}`} onClick={() => setShowProvider(true)}><i />{providerConfigured ? 'AI 已配置' : '配置 AI'}</button><div className={`bridge ${bridgeConnected ? 'online' : ''}`}><i />MCP</div></div></header>
-    <nav className="mode-tabs"><button className={mode === 'run' ? 'active' : ''} onClick={() => setMode('run')}>执行模式</button><button className={mode === 'compose' ? 'active' : ''} onClick={() => setMode('compose')}>画布编排</button></nav>
+    <nav className="mode-tabs"><button className={mode === 'run' ? 'active' : ''} onClick={() => { setMode('run'); setPortMenu(null); }}>执行模式</button><button className={mode === 'compose' ? 'active' : ''} onClick={() => setMode('compose')}>画布编排</button></nav>
     <main className={mode === 'compose' ? 'compose-main' : ''}>
       {mode === 'run' ? <RunView state={state} onRun={runScript} running={running} lastRun={lastRun} /> : <section className="compose-view">
         <div className="compose-document-bar"><div><strong>{editing?.name ?? '未命名流程'}</strong><span>{editing ? `正在编辑 ${editing.type === 'action' ? 'Action' : 'Script'}` : '新建 · 尚未保存'}</span></div><div><button className="secondary compact" onClick={newDraft}>新建</button><button className="secondary compact" onClick={() => setShowLibrary(true)}>打开</button></div></div>
-        <div className="canvas-toolbar"><button className={`tool select-tool ${selectPurpose?.kind === 'node' ? 'active' : ''}`} onClick={() => void startSelector({ kind: 'node' })}><span>⌖</span>{selectPurpose ? '退出选择' : 'Selector'}</button><button className="tool" onClick={() => addNode('ai')}><span>✦</span>AI</button><button className="tool" onClick={() => addNode('loop')}><span>↻</span>循环</button><button className="tool" onClick={() => addNode('wait')}><span>◷</span>等待</button><button className="tool" disabled={!state.actions.length} onClick={() => addNode('action')}><span>↗</span>Action</button></div>
+        <div className="canvas-toolbar"><button className={`tool select-tool ${selectPurpose?.kind === 'node' ? 'active' : ''}`} onClick={() => void startSelector({ kind: 'node' })}><span>⌖</span>{selectPurpose ? '退出选择' : 'Selector'}</button><button className="tool" onClick={() => addNode('ai')}><span>✦</span>AI</button><button className="tool" onClick={() => addNode('loop')}><span>↻</span>循环</button><button className="tool" onClick={() => addNode('wait')}><span>◷</span>等待</button></div>
         {selectPurpose && <div className="select-hint"><strong>Selector 已开启</strong><span>{selectPurpose.kind === 'ai-input' ? '在网页中选择一个元素作为 AI 输入。' : '页面事件已暂停；点击元素创建具名网页节点。'}</span></div>}
         <div className="canvas-layout"><WorkflowCanvas nodes={state.draft} edges={state.draftEdges} onChange={updateGraph} onSelect={setSelectedId} onAddFromPort={addFromPort} /><NodeInspector node={selectedNode} nodes={state.draft} actions={state.actions} onChange={updateNode} onDelete={deleteNode} onRun={() => selectedNode && void runGraph([selectedNode], [], selectedNode.id)} onPickAiSelector={() => selectedNode && void startSelector({ kind: 'ai-input', nodeId: selectedNode.id })} notify={notify} /></div>
         {lastRun && <RunReport result={lastRun} />}
@@ -235,6 +268,7 @@ function App() {
     {mode === 'compose' && <footer className="compose-footer"><button className="secondary" onClick={() => saveDefinition('action')}>{editing?.type === 'action' ? '更新 Action' : '保存 Action'}</button><button className="secondary" onClick={() => saveDefinition('script')}>{editing?.type === 'script' ? '更新 Script' : '保存 Script'}</button><button className="primary" disabled={Boolean(running) || !state.draft.length} onClick={() => void runGraph()}>{running === 'draft' ? '运行中…' : '▶ 运行画布'}</button></footer>}
     {showLibrary && <div className="library-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowLibrary(false); }}><section className="library-panel"><div className="library-head"><div><strong>打开已保存流程</strong><span>选择后才会载入编辑画布</span></div><button className="icon-btn" onClick={() => setShowLibrary(false)}>×</button></div><div className="library-group"><strong>Scripts</strong>{state.scripts.length ? state.scripts.map((script) => <button key={script.id} onClick={() => openDefinition(script, 'script')}><span>{script.name}</span><small>{script.nodes.length} 个节点</small></button>) : <p>暂无 Script</p>}</div><div className="library-group"><strong>Actions</strong>{state.actions.length ? state.actions.map((action) => <button key={action.id} onClick={() => openDefinition(action, 'action')}><span>{action.name}</span><small>{action.nodes.length} 个节点</small></button>) : <p>暂无 Action</p>}</div></section></div>}
     {showProvider && <ProviderSettings onClose={() => { setShowProvider(false); void send<RuntimeResponse>({ type: 'PAGE_AGENT_GET_PROVIDER' }).then((response) => setProviderConfigured(Boolean((response.result as AiProviderConfig | undefined)?.configured))); }} notify={notify} />}
+    {portMenu && <div className="node-picker-scrim" onMouseDown={(event) => { if (event.target === event.currentTarget) setPortMenu(null); }}><section className="node-picker" style={{ left: Math.max(8, Math.min(portMenu.x + 12, window.innerWidth - 196)), top: Math.max(8, Math.min(portMenu.y - 42, window.innerHeight - 166)) }}><div><strong>添加后续节点</strong><small>{portMenu.port === 'failure' ? '失败路径' : portMenu.port === 'body' ? '遍历路径' : portMenu.port === 'done' ? '完成路径' : '成功路径'}</small></div><div className="node-picker-grid"><button onClick={() => choosePortNode('dom')}><i>⌖</i><span>Selector</span></button><button onClick={() => choosePortNode('ai')}><i>✦</i><span>AI</span></button><button onClick={() => choosePortNode('loop')}><i>↻</i><span>循环</span></button><button onClick={() => choosePortNode('wait')}><i>◷</i><span>等待</span></button></div></section></div>}
     {toast && <div className="toast">{toast}</div>}
   </div>;
 }

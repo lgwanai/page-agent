@@ -1,4 +1,4 @@
-import type { WorkflowEdge, WorkflowNode, WorkspaceState } from '@/types/workflow';
+import { allowedEventsForTarget, defaultEventForTarget, type WorkflowEdge, type WorkflowNode, type WorkspaceState } from '@/types/workflow';
 
 const STORAGE_KEY = 'pageAgentLibraryV2';
 const LEGACY_STORAGE_KEY = 'pageAgentWorkspaceV1';
@@ -23,7 +23,11 @@ function linearEdges(nodes: Array<{ id: string }>): WorkflowEdge[] {
 function migrateNodes(nodes: WorkspaceState['draft']): WorkspaceState['draft'] {
   return nodes.map((node, index) => {
     const position = node.position ?? { x: 80 + index * 280, y: 100 };
-    if (node.kind === 'dom') return { ...node, position, target: { ...node.target, name: node.target.name || node.name } };
+    if (node.kind === 'dom') {
+      const target = { ...node.target, name: node.target.name || node.name };
+      const event = allowedEventsForTarget(target).includes(node.event.type) ? node.event : defaultEventForTarget(target);
+      return { ...node, position, target, event };
+    }
     if (node.kind === 'ai') return { ...node, position, inputs: node.inputs ?? [] };
     return { ...node, position };
   });

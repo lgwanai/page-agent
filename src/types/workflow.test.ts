@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createId, EVENT_LABELS, NODE_KIND_LABELS } from './workflow';
+import { allowedEventsForTarget, createId, defaultEventForTarget, EVENT_LABELS, NODE_KIND_LABELS, type PageTarget } from './workflow';
 
 describe('workflow contract', () => {
   it('creates prefixed unique ids', () => {
@@ -15,6 +15,19 @@ describe('workflow contract', () => {
     expect(EVENT_LABELS.select).toBe('选择选项');
     expect(EVENT_LABELS.custom).toBe('自定义 Web 事件');
     expect(Object.keys(EVENT_LABELS)).toHaveLength(12);
+  });
+
+  it.each([
+    ['input', { tagName: 'input', attributes: { type: 'text' } }, 'input', ['select', 'check']],
+    ['select', { tagName: 'select' }, 'select', ['input', 'check']],
+    ['checkbox', { tagName: 'input', attributes: { type: 'checkbox' } }, 'check', ['input', 'select']],
+    ['button', { tagName: 'button' }, 'click', ['input', 'select', 'check']],
+    ['contenteditable', { tagName: 'div', attributes: { contenteditable: 'true' } }, 'input', ['select', 'check']],
+  ])('infers meaningful operations for %s elements', (_label, partial, initial, excluded) => {
+    const target: PageTarget = { name: '目标', selector: '#target', frameId: 0, label: '目标', ...partial };
+    const allowed = allowedEventsForTarget(target);
+    expect(defaultEventForTarget(target).type).toBe(initial);
+    for (const event of excluded) expect(allowed).not.toContain(event);
   });
 
   it('keeps loops as first-class nodes without standalone conditions', () => {

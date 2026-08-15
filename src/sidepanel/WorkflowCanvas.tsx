@@ -12,7 +12,7 @@ interface CanvasProps {
   edges: WorkflowEdge[];
   onChange: (nodes: WorkflowNode[], edges: WorkflowEdge[]) => void;
   onSelect: (nodeId: string | null) => void;
-  onAddFromPort: (nodeId: string, port: EdgePort) => void;
+  onAddFromPort: (nodeId: string, port: EdgePort, point: { x: number; y: number }) => void;
 }
 
 const inputPort: WorkflowPort = { type: 'input', location: 'left', locationConfig: { left: 0, top: '50%' } };
@@ -76,7 +76,7 @@ function CanvasNode(props: WorkflowNodeProps) {
         const mouseEvent = event as React.MouseEvent<HTMLDivElement>;
         mouseEvent.preventDefault();
         mouseEvent.stopPropagation();
-        onAddFromPort(node.id, port.portID as EdgePort);
+        onAddFromPort(node.id, port.portID as EdgePort, { x: mouseEvent.clientX, y: mouseEvent.clientY });
       }}
     >
       {form?.render() ?? <div className="canvas-node-body">节点数据不可用</div>}

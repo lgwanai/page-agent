@@ -20,6 +20,7 @@ export interface PageTarget {
   label: string;
   text?: string;
   attributes?: Record<string, string>;
+  options?: Array<{ value: string; label: string }>;
 }
 
 export interface EventDefinition {
@@ -157,6 +158,43 @@ export const EVENT_LABELS: Record<FriendlyEventType, string> = {
   scrollIntoView: '滚动到节点',
   custom: '自定义 Web 事件',
 };
+
+const TEXT_INPUT_TYPES = new Set([
+  '', 'text', 'search', 'email', 'password', 'tel', 'url', 'number', 'date', 'datetime-local',
+  'month', 'time', 'week', 'color', 'range',
+]);
+const CLICK_INPUT_TYPES = new Set(['button', 'submit', 'reset', 'image', 'file']);
+const CLICK_ROLES = new Set(['button', 'link', 'menuitem', 'option', 'tab', 'switch']);
+
+/** Events a user can meaningfully perform on the selected DOM element. */
+export function allowedEventsForTarget(target: PageTarget): FriendlyEventType[] {
+  const tag = target.tagName.toLowerCase();
+  const attributes = target.attributes ?? {};
+  const inputType = (attributes.type ?? '').toLowerCase();
+  const role = (attributes.role ?? '').toLowerCase();
+  const contentEditable = attributes.contenteditable === '' || attributes.contenteditable === 'true';
+
+  if (tag === 'select') return ['select', 'click', 'focus', 'blur', 'pressKey', 'hover', 'scrollIntoView', 'custom'];
+  if (tag === 'textarea' || contentEditable || (tag === 'input' && TEXT_INPUT_TYPES.has(inputType))) {
+    return ['input', 'click', 'focus', 'blur', 'pressKey', 'hover', 'scrollIntoView', 'custom'];
+  }
+  if (tag === 'input' && (inputType === 'checkbox' || inputType === 'radio')) {
+    return ['check', 'click', 'focus', 'blur', 'pressKey', 'hover', 'scrollIntoView', 'custom'];
+  }
+  if (tag === 'form') return ['submit', 'click', 'hover', 'scrollIntoView', 'custom'];
+  if (tag === 'button' || tag === 'a' || CLICK_ROLES.has(role) || (tag === 'input' && CLICK_INPUT_TYPES.has(inputType))) {
+    return ['click', 'doubleClick', 'focus', 'blur', 'pressKey', 'hover', 'scrollIntoView', 'custom'];
+  }
+  return ['click', 'doubleClick', 'hover', 'scrollIntoView', 'custom'];
+}
+
+/** Best initial operation after a selector has been captured. */
+export function defaultEventForTarget(target: PageTarget): EventDefinition {
+  const allowed = allowedEventsForTarget(target);
+  const type = (['select', 'check', 'input', 'submit', 'click'] as FriendlyEventType[])
+    .find((candidate) => allowed.includes(candidate)) ?? allowed[0];
+  return { type };
+}
 
 export const NODE_KIND_LABELS: Record<WorkflowNode['kind'], string> = {
   dom: '网页节点', ai: 'AI 节点', action: 'Action', wait: '等待', loop: '循环',
