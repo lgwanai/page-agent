@@ -11,9 +11,9 @@ export type RuntimeMessage =
   | { type: 'PAGE_AGENT_EXECUTE_AI'; instruction: string; event: EventDefinition; scopeSelector?: string }
   | { type: 'PAGE_AGENT_READ_SELECTOR'; selector: string; multiple?: boolean; attribute?: string }
   | { type: 'PAGE_AGENT_RUN_NODES'; nodes: unknown[] }
-  | { type: 'PAGE_AGENT_RUN_GRAPH'; nodes: unknown[]; edges: WorkflowEdge[]; variables?: Record<string, string> }
-  | { type: 'PAGE_AGENT_RUN_SCRIPT'; scriptId: string; variables?: Record<string, string> }
-  | { type: 'PAGE_AGENT_RUN_ACTION'; actionId: string; variables?: Record<string, string> }
+  | { type: 'PAGE_AGENT_RUN_GRAPH'; nodes: unknown[]; edges: WorkflowEdge[]; variables?: Record<string, unknown> }
+  | { type: 'PAGE_AGENT_RUN_SCRIPT'; scriptId: string; variables?: Record<string, unknown> }
+  | { type: 'PAGE_AGENT_RUN_ACTION'; actionId: string; variables?: Record<string, unknown> }
   | { type: 'PAGE_AGENT_GET_STATE' }
   | { type: 'PAGE_AGENT_SET_STATE'; state: WorkspaceState }
   | { type: 'PAGE_AGENT_GET_PROVIDER' }

@@ -1,4 +1,4 @@
-import { allowedEventsForTarget, defaultEventForTarget, type WorkflowEdge, type WorkflowNode, type WorkspaceState } from '@/types/workflow';
+import { allowedEventsForTarget, createStartNode, defaultEventForTarget, type WorkflowEdge, type WorkflowNode, type WorkspaceState } from '@/types/workflow';
 
 const STORAGE_KEY = 'pageAgentLibraryV2';
 const LEGACY_STORAGE_KEY = 'pageAgentWorkspaceV1';
@@ -23,6 +23,18 @@ function linearEdges(nodes: Array<{ id: string }>): WorkflowEdge[] {
 function migrateNodes(nodes: WorkspaceState['draft']): WorkspaceState['draft'] {
   return nodes.map((node, index) => {
     const position = node.position ?? { x: 80 + index * 280, y: 100 };
+    if (node.kind === 'start') return {
+      ...createStartNode(node.id),
+      ...node,
+      position,
+      inputs: (node.inputs ?? []).map((input) => ({ ...input, type: input.type ?? 'string' })),
+      targetUrl: node.targetUrl ?? '',
+      strictValidation: Boolean(node.strictValidation),
+      waitForLogin: Boolean(node.waitForLogin),
+      loadTimeoutMs: node.loadTimeoutMs ?? 30_000,
+      loginTimeoutMs: node.loginTimeoutMs ?? 300_000,
+      settleDelayMs: node.settleDelayMs ?? 500,
+    };
     if (node.kind === 'dom') {
       const target = { ...node.target, name: node.target.name || node.name };
       const event = allowedEventsForTarget(target).includes(node.event.type) ? node.event : defaultEventForTarget(target);
@@ -68,6 +80,16 @@ export function migrateGraph(rawNodes: unknown[], rawEdges?: unknown[]): { nodes
       if (truthy) edges.push({ id: `edge_${predecessor.id}_${truthy.targetNodeId}_success`, sourceNodeId: predecessor.id, targetNodeId: truthy.targetNodeId, sourcePort: 'success' });
       if (falsy) edges.push({ id: `edge_${predecessor.id}_${falsy.targetNodeId}_failure`, sourceNodeId: predecessor.id, targetNodeId: falsy.targetNodeId, sourcePort: 'failure' });
     }
+  }
+  if (!nodes.some((node) => node.kind === 'start')) {
+    const root = nodes.find((node) => !edges.some((edge) => edge.targetNodeId === node.id));
+    const startId = nodes.some((node) => node.id === 'start') ? 'start_entry' : 'start';
+    const start = createStartNode(startId);
+    if (root) {
+      start.position = { x: (root.position?.x ?? 360) - 300, y: root.position?.y ?? 80 };
+      edges.push({ id: `edge_${start.id}_${root.id}`, sourceNodeId: start.id, targetNodeId: root.id, sourcePort: 'success' });
+    }
+    nodes.unshift(start);
   }
   return { nodes, edges: edges as WorkflowEdge[] };
 }

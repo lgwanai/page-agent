@@ -6,6 +6,7 @@ import {
 } from '@flowgram.ai/free-layout-editor';
 import '@flowgram.ai/free-layout-editor/index.css';
 import { createId, NODE_KIND_LABELS, type EdgePort, type WorkflowEdge, type WorkflowNode } from '@/types/workflow';
+import { selectedWorkflowNodeId, type SelectableEntity } from './canvas-selection';
 
 interface CanvasProps {
   nodes: WorkflowNode[];
@@ -22,6 +23,7 @@ const successFailurePorts: WorkflowPort[] = [
 ];
 
 const PORTS: Record<WorkflowNode['kind'], WorkflowPort[]> = {
+  start: [...successFailurePorts],
   dom: [inputPort, ...successFailurePorts],
   ai: [inputPort, ...successFailurePorts],
   action: [inputPort, ...successFailurePorts],
@@ -35,10 +37,12 @@ const PORTS: Record<WorkflowNode['kind'], WorkflowPort[]> = {
 };
 
 const PortActionContext = createContext<CanvasProps['onAddFromPort']>(() => undefined);
+const NodeSelectContext = createContext<CanvasProps['onSelect']>(() => undefined);
 
 function nodeSummary(node: WorkflowNode): string {
   let summary: string;
-  if (node.kind === 'dom') summary = `${node.event.type} · ${node.target.tagName}`;
+  if (node.kind === 'start') summary = `${node.inputs?.length ?? 0} 个参数 · ${node.targetUrl || '使用当前页面'}`;
+  else if (node.kind === 'dom') summary = `${node.event.type} · ${node.target.tagName}`;
   else if (node.kind === 'ai') summary = `${node.inputs.length} 个输入 · ${node.instruction || '未填写指令'}`;
   else if (node.kind === 'loop') summary = `遍历 ${node.items || '未配置数组'}`;
   else if (node.kind === 'wait') summary = `${node.durationMs}ms`;
@@ -53,7 +57,7 @@ function CanvasNodeForm() {
         const config = field.value;
         if (!config) return <div className="canvas-node-body">节点数据不可用</div>;
         return <>
-          <div className="canvas-node-head"><span>{config.kind === 'ai' ? '✦' : config.kind === 'dom' ? '⌖' : config.kind === 'loop' ? '↻' : '●'}</span><strong>{config.name}</strong></div>
+          <div className="canvas-node-head"><span>{config.kind === 'start' ? '▶' : config.kind === 'ai' ? '✦' : config.kind === 'dom' ? '⌖' : config.kind === 'loop' ? '↻' : '●'}</span><strong>{config.name}</strong></div>
           <div className="canvas-node-body"><em>{NODE_KIND_LABELS[config.kind]}</em><p>{nodeSummary(config)}</p></div>
         </>;
       }}
@@ -64,6 +68,7 @@ function CanvasNodeForm() {
 function CanvasNode(props: WorkflowNodeProps) {
   const { node, form } = useNodeRender();
   const onAddFromPort = useContext(PortActionContext);
+  const onSelect = useContext(NodeSelectContext);
   const meta = node.getNodeMeta<FlowNodeMeta>();
   return (
     <WorkflowNodeRenderer
@@ -79,7 +84,9 @@ function CanvasNode(props: WorkflowNodeProps) {
         onAddFromPort(node.id, port.portID as EdgePort, { x: mouseEvent.clientX, y: mouseEvent.clientY });
       }}
     >
-      {form?.render() ?? <div className="canvas-node-body">节点数据不可用</div>}
+      <div className="canvas-node-content" onClick={() => onSelect(node.id)}>
+        {form?.render() ?? <div className="canvas-node-body">节点数据不可用</div>}
+      </div>
     </WorkflowNodeRenderer>
   );
 }
@@ -128,9 +135,12 @@ function CanvasBridge({ graph, lastInternal, onChange, onSelect }: {
   const context = useClientContext();
   const signature = JSON.stringify(graph);
   useEffect(() => {
-    const disposable = context.selection.onSelectionChanged(() => onSelect(context.selection.selection[0]?.id ?? null));
+    const nodeIds = new Set(graph.nodes.map((node) => node.id));
+    const disposable = context.selection.onSelectionChanged((selection: SelectableEntity[]) => {
+      onSelect(selectedWorkflowNodeId(selection, nodeIds));
+    });
     return () => disposable.dispose();
-  }, [context, onSelect]);
+  }, [context, graph.nodes, onSelect]);
   useEffect(() => {
     if (signature === lastInternal.current) return;
     context.operation.fromJSON(graph);
@@ -158,6 +168,7 @@ export function WorkflowCanvas({ nodes, edges, onChange, onSelect, onAddFromPort
     nodeEngine: { enable: true },
     history: { enable: true, enableChangeNode: true },
     twoWayConnection: false,
+    canDeleteNode: (_context, node) => node.flowNodeType !== 'start',
     getNodeDefaultRegistry: (type) => ({ type, meta: { defaultExpanded: true }, formMeta: { render: () => <CanvasNodeForm /> } }),
     materials: { renderDefaultNode: CanvasNode },
     onAllLayersRendered: (context) => context.tools.fitView(false),
@@ -166,10 +177,12 @@ export function WorkflowCanvas({ nodes, edges, onChange, onSelect, onAddFromPort
   return (
     <div className="workflow-canvas">
       <PortActionContext.Provider value={onAddFromPort}>
-        <FreeLayoutEditorProvider ref={contextRef} {...props}>
-          <EditorRenderer className="workflow-editor" />
-          <CanvasBridge graph={graph} lastInternal={lastInternal} onChange={onChange} onSelect={onSelect} />
-        </FreeLayoutEditorProvider>
+        <NodeSelectContext.Provider value={onSelect}>
+          <FreeLayoutEditorProvider ref={contextRef} {...props}>
+            <EditorRenderer className="workflow-editor" />
+            <CanvasBridge graph={graph} lastInternal={lastInternal} onChange={onChange} onSelect={onSelect} />
+          </FreeLayoutEditorProvider>
+        </NodeSelectContext.Provider>
       </PortActionContext.Provider>
     </div>
   );

@@ -4,7 +4,7 @@ import { createRoot } from 'react-dom/client';
 import type { RuntimeMessage, RuntimeResponse } from '@/types/messages';
 import type { AiProviderConfig } from '@/types/provider';
 import {
-  createId, defaultEventForTarget, type ActionDefinition, type AiInputBinding, type PageTarget, type RunResult,
+  createId, createStartNode, defaultEventForTarget, type ActionDefinition, type AiInputBinding, type PageTarget, type RunResult,
   type ScriptDefinition, type WorkflowEdge, type WorkflowNode, type WorkspaceState,
 } from '@/types/workflow';
 import { EMPTY_WORKSPACE } from '@/shared/storage';
@@ -46,7 +46,7 @@ function uniqueName(nodes: WorkflowNode[], seed: string): string {
 
 function App() {
   const [mode, setMode] = useState<Mode>('run');
-  const [state, setState] = useState<WorkspaceState>(EMPTY_WORKSPACE);
+  const [state, setState] = useState<WorkspaceState>(() => ({ ...EMPTY_WORKSPACE, draft: [createStartNode()] }));
   const [selectPurpose, setSelectPurpose] = useState<SelectPurpose | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editing, setEditing] = useState<EditingDefinition | null>(null);
@@ -184,6 +184,7 @@ function App() {
   const updateNode = (node: WorkflowNode) => setState({ ...state, draft: state.draft.map((item) => item.id === node.id ? node : item) });
   const deleteNode = () => {
     if (!selectedId) return;
+    if (state.draft.find((node) => node.id === selectedId)?.kind === 'start') return notify('Start 是流程入口，不能删除');
     setState({ ...state, draft: state.draft.filter((node) => node.id !== selectedId), draftEdges: state.draftEdges.filter((edge) => edge.sourceNodeId !== selectedId && edge.targetNodeId !== selectedId) });
     setSelectedId(null);
   };
@@ -209,13 +210,13 @@ function App() {
   };
   const newDraft = () => {
     if (selectPurpose) void send({ type: 'PAGE_AGENT_STOP_SELECT' });
-    setState((current) => ({ ...current, draft: [], draftEdges: [] }));
+    setState((current) => ({ ...current, draft: [createStartNode()], draftEdges: [] }));
     setSelectPurpose(null);
     setPortMenu(null);
     setSelectedId(null);
     setEditing(null);
     setLastRun(null);
-    notify('已新建空白流程，未保存内容不会持久化');
+    notify('已新建流程，未保存内容不会持久化');
   };
   const openDefinition = (definition: ActionDefinition | ScriptDefinition, type: EditingDefinition['type']) => {
     setState((current) => ({ ...current, draft: structuredClone(definition.nodes), draftEdges: structuredClone(definition.edges) }));
@@ -261,7 +262,7 @@ function App() {
         <div className="compose-document-bar"><div><strong>{editing?.name ?? '未命名流程'}</strong><span>{editing ? `正在编辑 ${editing.type === 'action' ? 'Action' : 'Script'}` : '新建 · 尚未保存'}</span></div><div><button className="secondary compact" onClick={newDraft}>新建</button><button className="secondary compact" onClick={() => setShowLibrary(true)}>打开</button></div></div>
         <div className="canvas-toolbar"><button className={`tool select-tool ${selectPurpose?.kind === 'node' ? 'active' : ''}`} onClick={() => void startSelector({ kind: 'node' })}><span>⌖</span>{selectPurpose ? '退出选择' : 'Selector'}</button><button className="tool" onClick={() => addNode('ai')}><span>✦</span>AI</button><button className="tool" onClick={() => addNode('loop')}><span>↻</span>循环</button><button className="tool" onClick={() => addNode('wait')}><span>◷</span>等待</button></div>
         {selectPurpose && <div className="select-hint"><strong>Selector 已开启</strong><span>{selectPurpose.kind === 'ai-input' ? '在网页中选择一个元素作为 AI 输入。' : '页面事件已暂停；点击元素创建具名网页节点。'}</span></div>}
-        <div className="canvas-layout"><WorkflowCanvas nodes={state.draft} edges={state.draftEdges} onChange={updateGraph} onSelect={setSelectedId} onAddFromPort={addFromPort} /><NodeInspector node={selectedNode} nodes={state.draft} actions={state.actions} onChange={updateNode} onDelete={deleteNode} onRun={() => selectedNode && void runGraph([selectedNode], [], selectedNode.id)} onPickAiSelector={() => selectedNode && void startSelector({ kind: 'ai-input', nodeId: selectedNode.id })} notify={notify} /></div>
+        <div className={`canvas-layout${selectedNode ? ' has-selection' : ''}`}><WorkflowCanvas nodes={state.draft} edges={state.draftEdges} onChange={updateGraph} onSelect={setSelectedId} onAddFromPort={addFromPort} /><NodeInspector node={selectedNode} nodes={state.draft} actions={state.actions} onChange={updateNode} onDelete={deleteNode} onRun={() => selectedNode && void runGraph([selectedNode], [], selectedNode.id)} onClose={() => setSelectedId(null)} onPickAiSelector={() => selectedNode && void startSelector({ kind: 'ai-input', nodeId: selectedNode.id })} notify={notify} /></div>
         {lastRun && <RunReport result={lastRun} />}
       </section>}
     </main>

@@ -19,12 +19,24 @@ describe('workspace graph migration', () => {
 
     const migrated = migrateGraph(nodes, edges);
 
-    expect(migrated.nodes.map((node) => node.id)).toEqual(['ai', 'success', 'failure']);
+    expect(migrated.nodes.map((node) => node.id)).toEqual(['start', 'ai', 'success', 'failure']);
     expect(migrated.edges).toEqual(expect.arrayContaining([
+      expect.objectContaining({ sourceNodeId: 'start', targetNodeId: 'ai', sourcePort: 'success' }),
       expect.objectContaining({ sourceNodeId: 'ai', targetNodeId: 'success', sourcePort: 'success' }),
       expect.objectContaining({ sourceNodeId: 'ai', targetNodeId: 'failure', sourcePort: 'failure' }),
     ]));
     expect(migrated.edges.some((edge) => edge.sourceNodeId === 'condition' || edge.targetNodeId === 'condition')).toBe(false);
+  });
+
+  it('adds one configured Start entry to legacy graphs', () => {
+    const migrated = migrateGraph([{ id: 'wait', kind: 'wait', name: '旧流程', durationMs: 10 }], []);
+    const start = migrated.nodes.find((node) => node.kind === 'start');
+
+    expect(start).toMatchObject({
+      id: 'start', inputs: [], targetUrl: '', strictValidation: false, waitForLogin: false,
+      loadTimeoutMs: 30_000, loginTimeoutMs: 300_000, settleDelayMs: 500,
+    });
+    expect(migrated.edges).toContainEqual(expect.objectContaining({ sourceNodeId: 'start', targetNodeId: 'wait', sourcePort: 'success' }));
   });
 
   it('persists only the versioned library and always opens a blank editor', async () => {

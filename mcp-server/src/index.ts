@@ -5,7 +5,9 @@ import { z } from 'zod';
 import { ExtensionBridge } from './bridge.js';
 
 const bridge = new ExtensionBridge(Number(process.env.PAGE_AGENT_BRIDGE_PORT || 17373));
-const server = new McpServer({ name: 'page-agent', version: '0.4.0' });
+const server = new McpServer({ name: 'page-agent', version: '0.5.0' });
+const jsonObject = z.record(z.string(), z.unknown());
+const RUN_TIMEOUT_MS = 31 * 60 * 1000;
 
 function text(value: unknown) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }] };
@@ -41,24 +43,26 @@ server.registerTool('list_page_actions', {
 });
 
 server.registerTool('run_page_script', {
-  description: '在当前 Chrome 活动网页运行一个已保存的 Script。scriptId 既可以传 ID，也可以传名称；变量会替换节点中的 {{变量名}}。',
+  description: '在当前 Chrome 活动网页运行一个已保存的 Script。data 可传入 JSON 对象；Start 节点按参数名称直接映射并校验类型，后续节点通过 {{参数名}} 使用。',
   inputSchema: {
     scriptId: z.string().describe('Script ID 或准确名称'),
-    variables: z.record(z.string(), z.string()).optional().describe('模板变量，例如 {"客户名":"华贸"}'),
+    data: jsonObject.optional().describe('传给 Start 节点的 JSON 数据，可包含对象、数组、数字和布尔值'),
+    variables: jsonObject.optional().describe('兼容旧版的模板变量；与 data 同时传入时，data 中的同名字段优先'),
   },
-}, async ({ scriptId, variables }) => {
-  try { return text(await bridge.request('run_script', { scriptId, variables: variables ?? {} })); }
+}, async ({ scriptId, data, variables }) => {
+  try { return text(await bridge.request('run_script', { scriptId, data: data ?? {}, variables: variables ?? {} }, RUN_TIMEOUT_MS)); }
   catch (error) { return toolError(error); }
 });
 
 server.registerTool('run_page_action', {
-  description: '在当前 Chrome 活动网页运行一个已保存的 Action。actionId 既可以传 ID，也可以传名称。',
+  description: '在当前 Chrome 活动网页运行一个已保存的 Action。data 中与 Start 声明同名的字段会直接映射并校验类型。',
   inputSchema: {
     actionId: z.string().describe('Action ID 或准确名称'),
-    variables: z.record(z.string(), z.string()).optional().describe('模板变量'),
+    data: jsonObject.optional().describe('传给 Start 节点的 JSON 数据'),
+    variables: jsonObject.optional().describe('兼容旧版的模板变量；data 中的同名字段优先'),
   },
-}, async ({ actionId, variables }) => {
-  try { return text(await bridge.request('run_action', { actionId, variables: variables ?? {} })); }
+}, async ({ actionId, data, variables }) => {
+  try { return text(await bridge.request('run_action', { actionId, data: data ?? {}, variables: variables ?? {} }, RUN_TIMEOUT_MS)); }
   catch (error) { return toolError(error); }
 });
 

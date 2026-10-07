@@ -35,6 +35,35 @@ interface BaseNode {
   position?: { x: number; y: number };
 }
 
+export interface StartNode extends BaseNode {
+  kind: 'start';
+  inputs: StartInputDeclaration[];
+  targetUrl: string;
+  strictValidation: boolean;
+  waitForLogin: boolean;
+  loadTimeoutMs: number;
+  loginTimeoutMs: number;
+  settleDelayMs: number;
+}
+
+export interface StartInputDeclaration {
+  id: string;
+  name: string;
+  type: StartInputType;
+  required: boolean;
+  description?: string;
+}
+
+export type StartInputType = 'string' | 'number' | 'array' | 'object' | 'objectArray';
+
+export const START_INPUT_TYPE_LABELS: Record<StartInputType, string> = {
+  string: '文本',
+  number: '数字',
+  array: '列表',
+  object: '对象',
+  objectArray: '对象列表',
+};
+
 export interface DomNode extends BaseNode {
   kind: 'dom';
   target: PageTarget;
@@ -81,7 +110,7 @@ export interface LoopNode extends BaseNode {
   maxIterations: number;
 }
 
-export type WorkflowNode = DomNode | AiNode | ActionNode | WaitNode | LoopNode;
+export type WorkflowNode = StartNode | DomNode | AiNode | ActionNode | WaitNode | LoopNode;
 
 export type EdgePort = 'success' | 'failure' | 'body' | 'done';
 
@@ -197,9 +226,25 @@ export function defaultEventForTarget(target: PageTarget): EventDefinition {
 }
 
 export const NODE_KIND_LABELS: Record<WorkflowNode['kind'], string> = {
-  dom: '网页节点', ai: 'AI 节点', action: 'Action', wait: '等待', loop: '循环',
+  start: '开始', dom: '网页节点', ai: 'AI 节点', action: 'Action', wait: '等待', loop: '循环',
 };
 
 export function createId(prefix: string): string {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+export function createStartNode(id = createId('start')): StartNode {
+  return {
+    id,
+    kind: 'start',
+    name: '开始',
+    inputs: [],
+    targetUrl: '',
+    strictValidation: false,
+    waitForLogin: false,
+    loadTimeoutMs: 30_000,
+    loginTimeoutMs: 300_000,
+    settleDelayMs: 500,
+    position: { x: 60, y: 80 },
+  };
 }

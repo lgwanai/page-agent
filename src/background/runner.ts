@@ -2,8 +2,8 @@ import { invokeAiNode } from './ai-provider';
 import { loadWorkspace, saveWorkspace } from '@/shared/storage';
 import type { AiInvocationInput } from '@/types/provider';
 import type {
-  ActionDefinition, AiNode, EdgePort, ExecutionVerification, LoopNode, RunResult, StepResult,
-  WorkflowEdge, WorkflowNode,
+  ActionDefinition, AiNode, EdgePort, ExecutionVerification, LoopNode, RunResult, StartNode, StepResult,
+  StartInputType, WorkflowEdge, WorkflowNode,
 } from '@/types/workflow';
 
 type Variables = Record<string, unknown>;
@@ -11,6 +11,44 @@ type RuntimeContext = Record<string, unknown>;
 
 function getPath(source: unknown, path: string): unknown {
   return path.split('.').reduce<unknown>((value, key) => value && typeof value === 'object' ? (value as Record<string, unknown>)[key] : undefined, source);
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function matchesInputType(value: unknown, type: StartInputType): boolean {
+  if (type === 'string') return typeof value === 'string';
+  if (type === 'number') return typeof value === 'number' && Number.isFinite(value);
+  if (type === 'array') return Array.isArray(value) && value.every((item) => !isObject(item));
+  if (type === 'object') return isObject(value);
+  return Array.isArray(value) && value.every(isObject);
+}
+
+const INPUT_TYPE_NAMES: Record<StartInputType, string> = {
+  string: '文本', number: '数字', array: '列表', object: '对象', objectArray: '对象列表',
+};
+
+/** Maps same-named top-level JSON fields onto the variables declared by Start. */
+export function mapStartInputs(node: StartNode, payload: Variables): Variables {
+  const mapped: Variables = {};
+  const names = new Set<string>();
+  for (const input of node.inputs ?? []) {
+    const name = input.name.trim();
+    if (!name) throw new Error('Start 输入存在未命名参数');
+    if (names.has(name)) throw new Error(`Start 输入参数名重复：${name}`);
+    names.add(name);
+
+    const value = payload[name];
+    if (value === undefined) {
+      if (input.required) throw new Error(`MCP JSON 缺少必填参数：${name}`);
+      continue;
+    }
+    const type = input.type ?? 'string';
+    if (!matchesInputType(value, type)) throw new Error(`MCP 参数「${name}」类型不正确，需要${INPUT_TYPE_NAMES[type]}`);
+    mapped[name] = value;
+  }
+  return mapped;
 }
 
 function resolveValue(value: string | undefined, variables: Variables, context: RuntimeContext): unknown {
@@ -25,11 +63,112 @@ function interpolate(value: string | undefined, variables: Variables, context: R
   return resolved === undefined ? undefined : typeof resolved === 'string' ? resolved : JSON.stringify(resolved);
 }
 
-export async function activeTabId(): Promise<number> {
+export async function activeTabId(allowNavigation = false): Promise<number> {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) throw new Error('没有可操作的活动网页');
-  if (!/^https?:/i.test(tab.url ?? '')) throw new Error('Page Agent 只能操作 http/https 网页');
+  if (!allowNavigation && !/^https?:/i.test(tab.url ?? '')) throw new Error('Page Agent 只能操作 http/https 网页');
   return tab.id;
+}
+
+function comparablePath(pathname: string): string {
+  return pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname;
+}
+
+export function matchesTargetUrl(currentUrl: string | undefined, targetUrl: string, strict: boolean): boolean {
+  if (!currentUrl) return false;
+  try {
+    const current = new URL(currentUrl);
+    const target = new URL(targetUrl);
+    if (current.protocol !== target.protocol || current.host !== target.host) return false;
+    if (comparablePath(current.pathname) !== comparablePath(target.pathname)) return false;
+    return !strict || current.search === target.search;
+  } catch {
+    return false;
+  }
+}
+
+function duration(value: number, fallback: number, max: number): number {
+  return Number.isFinite(value) ? Math.max(0, Math.min(value, max)) : fallback;
+}
+
+async function waitForTab(
+  tabId: number,
+  predicate: (tab: chrome.tabs.Tab) => boolean,
+  timeoutMs: number,
+  timeoutMessage: string,
+): Promise<chrome.tabs.Tab> {
+  const current = await chrome.tabs.get(tabId);
+  if (predicate(current)) return current;
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      clearTimeout(timer);
+      chrome.tabs.onUpdated.removeListener(onUpdated);
+      chrome.tabs.onRemoved.removeListener(onRemoved);
+    };
+    const finish = (tab: chrome.tabs.Tab) => {
+      cleanup();
+      resolve(tab);
+    };
+    const onUpdated = (updatedTabId: number, _change: chrome.tabs.TabChangeInfo, tab: chrome.tabs.Tab) => {
+      if (updatedTabId === tabId && predicate(tab)) finish(tab);
+    };
+    const onRemoved = (removedTabId: number) => {
+      if (removedTabId !== tabId) return;
+      cleanup();
+      reject(new Error('目标页面已关闭'));
+    };
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error(timeoutMessage));
+    }, timeoutMs);
+    chrome.tabs.onUpdated.addListener(onUpdated);
+    chrome.tabs.onRemoved.addListener(onRemoved);
+  });
+}
+
+async function prepareStart(
+  tabId: number,
+  node: StartNode,
+  variables: Variables,
+  context: RuntimeContext,
+): Promise<{ url: string; navigated: boolean }> {
+  const targetUrl = interpolate(node.targetUrl, variables, context)?.trim() ?? '';
+  if (targetUrl) {
+    let parsed: URL;
+    try { parsed = new URL(targetUrl); } catch { throw new Error(`目标页面 URL 无效：${targetUrl}`); }
+    if (!/^https?:$/.test(parsed.protocol)) throw new Error('Start 只支持 http/https 目标页面');
+  }
+
+  const loadTimeout = duration(node.loadTimeoutMs, 30_000, 300_000);
+  const loginTimeout = duration(node.loginTimeoutMs, 300_000, 1_800_000);
+  let tab = await chrome.tabs.get(tabId);
+  let navigated = false;
+  if (targetUrl && !matchesTargetUrl(tab.url, targetUrl, node.strictValidation)) {
+    await chrome.tabs.update(tabId, { url: targetUrl });
+    navigated = true;
+    tab = await waitForTab(tabId, (candidate) => candidate.status === 'complete', loadTimeout, '目标页面加载超时');
+  } else if (tab.status !== 'complete') {
+    tab = await waitForTab(tabId, (candidate) => candidate.status === 'complete', loadTimeout, '当前页面加载超时');
+  }
+
+  if (targetUrl && !matchesTargetUrl(tab.url, targetUrl, node.strictValidation)) {
+    if (!node.waitForLogin) throw new Error(`页面未到达目标 URL：${tab.url ?? '未知地址'}`);
+    tab = await waitForTab(
+      tabId,
+      (candidate) => candidate.status === 'complete' && matchesTargetUrl(candidate.url, targetUrl, node.strictValidation),
+      loginTimeout,
+      '等待登录完成超时',
+    );
+  }
+
+  const settleDelay = duration(node.settleDelayMs, 500, 60_000);
+  if (settleDelay) await new Promise((resolve) => setTimeout(resolve, settleDelay));
+  const finalTab = await chrome.tabs.get(tabId);
+  if (!/^https?:/i.test(finalTab.url ?? '')) throw new Error('Start 最终页面不是可操作的 http/https 网页');
+  if (targetUrl && !matchesTargetUrl(finalTab.url, targetUrl, node.strictValidation)) {
+    throw new Error(`页面校验失败：${finalTab.url ?? '未知地址'}`);
+  }
+  return { url: finalTab.url!, navigated };
 }
 
 export async function sendToFrame(tabId: number, frameId: number, message: unknown): Promise<Record<string, unknown>> {
@@ -77,6 +216,21 @@ async function executeAtomic(
   context: RuntimeContext,
   stack: string[],
 ): Promise<AtomicResult> {
+  if (node.kind === 'start') {
+    const mappedInputs = mapStartInputs(node, variables);
+    Object.assign(variables, mappedInputs);
+    const data = await prepareStart(tabId, node, variables, context);
+    return {
+      data: { ...data, inputs: mappedInputs },
+      port: 'success',
+      verification: {
+        ok: true,
+        summary: `页面已准备：${data.url}`,
+        expected: interpolate(node.targetUrl, variables, context) || '当前页面',
+        actual: data.url,
+      },
+    };
+  }
   if (node.kind === 'wait') {
     await new Promise((resolve) => setTimeout(resolve, Math.max(0, Math.min(node.durationMs, 60_000))));
     return { data: node.durationMs, port: 'success' };
@@ -146,7 +300,9 @@ async function runGraphInternal(
   if (!nodes.length) return { ok: true, steps: [] };
   const byId = new Map(nodes.map((node) => [node.id, node]));
   const incoming = new Set(edges.map((edge) => edge.targetNodeId));
-  let current: WorkflowNode | undefined = nodes.find((node) => !incoming.has(node.id)) ?? nodes[0];
+  let current: WorkflowNode | undefined = nodes.find((node) => node.kind === 'start')
+    ?? nodes.find((node) => !incoming.has(node.id))
+    ?? nodes[0];
   const steps: StepResult[] = [];
   const loops = new Map<string, { items: unknown[]; index: number }>();
   let guard = 0;
@@ -214,7 +370,8 @@ function linearEdges(nodes: WorkflowNode[]): WorkflowEdge[] {
 }
 
 export async function runGraph(nodes: WorkflowNode[], edges: WorkflowEdge[], variables: Variables = {}): Promise<RunResult> {
-  const tabId = await activeTabId();
+  const allowNavigation = nodes.some((node) => node.kind === 'start' && Boolean(node.targetUrl.trim()));
+  const tabId = await activeTabId(allowNavigation);
   const { actions } = await loadWorkspace();
   return runGraphInternal(tabId, nodes, edges, actions, { ...variables }, {});
 }

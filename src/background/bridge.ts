@@ -17,6 +17,16 @@ async function activePage(): Promise<Record<string, unknown>> {
   return { tabId: tab?.id, title: tab?.title, url: tab?.url };
 }
 
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function requestData(params: Record<string, unknown>): Record<string, unknown> {
+  const variables = isJsonObject(params.variables) ? params.variables : {};
+  const data = isJsonObject(params.data) ? params.data : {};
+  return { ...variables, ...data };
+}
+
 async function handle(request: BridgeRequest): Promise<unknown> {
   const params = request.params ?? {};
   switch (request.method) {
@@ -28,8 +38,8 @@ async function handle(request: BridgeRequest): Promise<unknown> {
     }
     case 'list_scripts': return (await loadWorkspace()).scripts;
     case 'list_actions': return (await loadWorkspace()).actions;
-    case 'run_script': return runScript(String(params.scriptId ?? ''), (params.variables ?? {}) as Record<string, string>);
-    case 'run_action': return runAction(String(params.actionId ?? ''), (params.variables ?? {}) as Record<string, string>);
+    case 'run_script': return runScript(String(params.scriptId ?? ''), requestData(params));
+    case 'run_action': return runAction(String(params.actionId ?? ''), requestData(params));
     case 'active_page': return activePage();
     default: throw new Error(`未知 Bridge 方法：${request.method}`);
   }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { allowedEventsForTarget, createId, defaultEventForTarget, EVENT_LABELS, NODE_KIND_LABELS, type PageTarget } from './workflow';
+import { allowedEventsForTarget, createId, createStartNode, defaultEventForTarget, EVENT_LABELS, NODE_KIND_LABELS, type PageTarget } from './workflow';
 
 describe('workflow contract', () => {
   it('creates prefixed unique ids', () => {
@@ -34,5 +34,12 @@ describe('workflow contract', () => {
     expect(NODE_KIND_LABELS.loop).toBe('循环');
     expect(Object.keys(NODE_KIND_LABELS)).toEqual(expect.arrayContaining(['dom', 'ai', 'loop']));
     expect(Object.keys(NODE_KIND_LABELS)).not.toContain('condition');
+  });
+
+  it('creates a safe default Start node', () => {
+    expect(createStartNode('start')).toMatchObject({
+      id: 'start', kind: 'start', targetUrl: '', strictValidation: false,
+      inputs: [], waitForLogin: false, loadTimeoutMs: 30_000, loginTimeoutMs: 300_000, settleDelayMs: 500,
+    });
   });
 });
