@@ -1,6 +1,6 @@
 {
   "name": "@page-agent/mcp-server",
-  "version": "0.5.0",
+  "version": "0.8.1",
   "private": true,
   "type": "module",
   "bin": { "page-agent-mcp": "dist/index.js" },

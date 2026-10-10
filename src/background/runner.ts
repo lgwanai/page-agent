@@ -1,13 +1,16 @@
 import { invokeAiNode } from './ai-provider';
+import { sendFrameMessage } from './frame-messaging';
+import { navigateToStartUrl } from './start-navigation';
 import { loadWorkspace, saveWorkspace } from '@/shared/storage';
 import type { AiInvocationInput } from '@/types/provider';
 import type {
-  ActionDefinition, AiNode, EdgePort, ExecutionVerification, LoopNode, RunResult, StartNode, StepResult,
-  StartInputType, WorkflowEdge, WorkflowNode,
+  ActionDefinition, AiNode, DomQueryMatch, EdgePort, ExecutionVerification, LoopNode, RunResult, StartNode, StepResult,
+  PageTarget, RecordedTargetHint, StartInputType, WorkflowEdge, WorkflowNode,
 } from '@/types/workflow';
 
 type Variables = Record<string, unknown>;
 type RuntimeContext = Record<string, unknown>;
+export type RunProgress = (nodeId: string, phase: 'running' | 'completed', steps?: StepResult[]) => void;
 
 function getPath(source: unknown, path: string): unknown {
   return path.split('.').reduce<unknown>((value, key) => value && typeof value === 'object' ? (value as Record<string, unknown>)[key] : undefined, source);
@@ -131,7 +134,7 @@ async function prepareStart(
   node: StartNode,
   variables: Variables,
   context: RuntimeContext,
-): Promise<{ url: string; navigated: boolean }> {
+): Promise<{ url: string; navigated: boolean; previousUrl?: string; requestedUrl: string }> {
   const targetUrl = interpolate(node.targetUrl, variables, context)?.trim() ?? '';
   if (targetUrl) {
     let parsed: URL;
@@ -142,11 +145,13 @@ async function prepareStart(
   const loadTimeout = duration(node.loadTimeoutMs, 30_000, 300_000);
   const loginTimeout = duration(node.loginTimeoutMs, 300_000, 1_800_000);
   let tab = await chrome.tabs.get(tabId);
+  const previousUrl = tab.url;
   let navigated = false;
-  if (targetUrl && !matchesTargetUrl(tab.url, targetUrl, node.strictValidation)) {
-    await chrome.tabs.update(tabId, { url: targetUrl });
+  if (targetUrl) {
+    // A matching address is not a clean workflow entry state (SPA state, forms, iframes).
+    // A configured Start URL means open it on EVERY run; only an empty URL reuses the page.
+    tab = await navigateToStartUrl(tabId, targetUrl, loadTimeout, previousUrl);
     navigated = true;
-    tab = await waitForTab(tabId, (candidate) => candidate.status === 'complete', loadTimeout, '目标页面加载超时');
   } else if (tab.status !== 'complete') {
     tab = await waitForTab(tabId, (candidate) => candidate.status === 'complete', loadTimeout, '当前页面加载超时');
   }
@@ -168,18 +173,11 @@ async function prepareStart(
   if (targetUrl && !matchesTargetUrl(finalTab.url, targetUrl, node.strictValidation)) {
     throw new Error(`页面校验失败：${finalTab.url ?? '未知地址'}`);
   }
-  return { url: finalTab.url!, navigated };
+  return { url: finalTab.url!, navigated, previousUrl, requestedUrl: targetUrl };
 }
 
-export async function sendToFrame(tabId: number, frameId: number, message: unknown): Promise<Record<string, unknown>> {
-  try {
-    return await chrome.tabs.sendMessage(tabId, message, { frameId }) as Record<string, unknown>;
-  } catch {
-    const files = chrome.runtime.getManifest().content_scripts?.[0]?.js ?? [];
-    if (!files.length) throw new Error('插件页面脚本不可用，请刷新网页后重试');
-    await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, files });
-    return await chrome.tabs.sendMessage(tabId, message, { frameId }) as Record<string, unknown>;
-  }
+export async function sendToFrame(tabId: number, frameId: number, message: unknown, frameUrl?: string): Promise<Record<string, unknown>> {
+  return sendFrameMessage(tabId, frameId, message, frameUrl);
 }
 
 async function collectAiInputs(tabId: number, node: AiNode, nodes: WorkflowNode[], variables: Variables, context: RuntimeContext): Promise<AiInvocationInput[]> {
@@ -198,7 +196,7 @@ async function collectAiInputs(tabId: number, node: AiNode, nodes: WorkflowNode[
     const response = await sendToFrame(tabId, input.target.frameId ?? 0, {
       type: 'PAGE_AGENT_READ_SELECTOR', selector: interpolate(input.target.selector, variables, context),
       multiple: input.multiple, attribute: input.attribute ?? 'text',
-    });
+    }, input.target.frameUrl);
     if (!response.ok) throw new Error(String(response.error ?? `读取 AI 输入失败：${input.name}`));
     inputs.push({ name: input.name, type: input.multiple ? 'selector[]' : 'selector', value: response.data });
   }
@@ -206,6 +204,11 @@ async function collectAiInputs(tabId: number, node: AiNode, nodes: WorkflowNode[
 }
 
 interface AtomicResult { data?: unknown; port: EdgePort; nested?: StepResult[]; verification?: ExecutionVerification }
+
+function targetHint(target: PageTarget): { targetHint?: RecordedTargetHint } {
+  if (!target.attributes && !target.text) return {};
+  return { targetHint: { tagName: target.tagName, attributes: target.attributes, text: target.text } };
+}
 
 async function executeAtomic(
   tabId: number,
@@ -225,7 +228,7 @@ async function executeAtomic(
       port: 'success',
       verification: {
         ok: true,
-        summary: `页面已准备：${data.url}`,
+        summary: `${data.navigated ? '已打开目标页面' : '使用当前页面'}：${data.url}（后续节点将验证业务控件）`,
         expected: interpolate(node.targetUrl, variables, context) || '当前页面',
         actual: data.url,
       },
@@ -246,12 +249,41 @@ async function executeAtomic(
   if (node.kind === 'dom') {
     const event = { ...node.event, value: interpolate(node.event.value, variables, context) };
     const response = await sendToFrame(tabId, node.target.frameId ?? 0, {
-      type: 'PAGE_AGENT_EXECUTE_EVENT', selector: interpolate(node.target.selector, variables, context), event,
-    });
+      type: 'PAGE_AGENT_EXECUTE_EVENT', selector: interpolate(node.target.selector, variables, context), event, ...targetHint(node.target),
+    }, node.target.frameUrl);
     if (!response.ok) throw Object.assign(new Error(String(response.error ?? '页面执行失败')), {
       verification: response.verification as ExecutionVerification | undefined,
     });
     return { data: response.data, port: 'success', verification: response.verification as ExecutionVerification | undefined };
+  }
+
+  if (node.kind === 'query') {
+    const frameId = node.target.frameId ?? 0;
+    const response = await sendToFrame(tabId, frameId, {
+      type: 'PAGE_AGENT_QUERY_DOM', selector: interpolate(node.target.selector, variables, context) ?? '',
+      query: {
+        ...node.query,
+        candidateSelector: interpolate(node.query.candidateSelector, variables, context) ?? '*',
+        attributeName: interpolate(node.query.attributeName, variables, context) ?? '',
+        pattern: interpolate(node.query.pattern, variables, context) ?? '',
+      },
+    }, node.target.frameUrl);
+    if (!response.ok) throw new Error(String(response.error ?? 'Query 检索失败'));
+    if (!Array.isArray(response.data)) throw new Error('Query 返回的 DOM 列表无效');
+    const data = (response.data as Omit<DomQueryMatch, 'frameId'>[]).map((item) => ({ ...item, frameId: Number(response.frameId ?? frameId) }));
+    return { data, port: 'success', verification: { ok: true, summary: `${node.name}：匹配 ${data.length} 个 DOM`, actual: data.length } };
+  }
+
+  if (node.kind === 'calendar') {
+    const endDate = node.mode === 'range' ? interpolate(node.endDate, variables, context) : undefined;
+    if (node.mode === 'range' && !endDate?.trim()) throw new Error('区间日历需要配置结束日期');
+    const response = await sendToFrame(tabId, node.target.frameId ?? 0, {
+      type: 'PAGE_AGENT_SELECT_DATE', selector: interpolate(node.target.selector, variables, context) ?? '',
+      date: interpolate(node.date, variables, context) ?? '',
+      endDate,
+    }, node.target.frameUrl);
+    if (!response.ok) throw Object.assign(new Error(String(response.error ?? '日历选择失败')), { verification: response.verification });
+    return { data: response.data, port: 'success', verification: response.verification as ExecutionVerification };
   }
 
   const inputs = await collectAiInputs(tabId, node, nodes, variables, context);
@@ -262,8 +294,8 @@ async function executeAtomic(
     const binding = node.inputs.find((input) => input.name === invocation.inputName && input.type === 'selector');
     if (!binding?.target) throw new Error(`AI 返回了未知 selector 输入：${invocation.inputName}`);
     const response = await sendToFrame(tabId, binding.target.frameId ?? 0, {
-      type: 'PAGE_AGENT_EXECUTE_EVENT', selector: binding.target.selector, event: invocation.event,
-    });
+      type: 'PAGE_AGENT_EXECUTE_EVENT', selector: binding.target.selector, event: invocation.event, ...targetHint(binding.target),
+    }, binding.target.frameUrl);
     if (!response.ok) throw Object.assign(new Error(String(response.error ?? 'AI 事件执行失败')), {
       verification: response.verification as ExecutionVerification | undefined,
     });
@@ -296,6 +328,7 @@ async function runGraphInternal(
   variables: Variables,
   context: RuntimeContext,
   stack: string[] = [],
+  progress?: RunProgress,
 ): Promise<RunResult> {
   if (!nodes.length) return { ok: true, steps: [] };
   const byId = new Map(nodes.map((node) => [node.id, node]));
@@ -308,6 +341,8 @@ async function runGraphInternal(
   let guard = 0;
 
   while (current && guard++ < 1000) {
+    const stepOffset = steps.length;
+    progress?.(current.id, 'running');
     let port: EdgePort = 'success';
     try {
       if (current.kind === 'loop') {
@@ -354,6 +389,8 @@ async function runGraphInternal(
       steps.push({ ok: false, nodeId: current.id, message: executionError.message, verification: executionError.verification, outputPort: port });
       const failureEdge = edges.find((edge) => edge.sourceNodeId === current!.id && edge.sourcePort === 'failure');
       if (!failureEdge) return { ok: false, steps, error: executionError.message };
+    } finally {
+      progress?.(current.id, 'completed', steps.slice(stepOffset));
     }
 
     const nextEdge: WorkflowEdge | undefined = edges.find((edge) => edge.sourceNodeId === current!.id && edge.sourcePort === port)
@@ -369,11 +406,11 @@ function linearEdges(nodes: WorkflowNode[]): WorkflowEdge[] {
   return nodes.slice(0, -1).map((node, index) => ({ id: `edge_${node.id}_${nodes[index + 1].id}`, sourceNodeId: node.id, targetNodeId: nodes[index + 1].id, sourcePort: 'success' }));
 }
 
-export async function runGraph(nodes: WorkflowNode[], edges: WorkflowEdge[], variables: Variables = {}): Promise<RunResult> {
+export async function runGraph(nodes: WorkflowNode[], edges: WorkflowEdge[], variables: Variables = {}, progress?: RunProgress): Promise<RunResult> {
   const allowNavigation = nodes.some((node) => node.kind === 'start' && Boolean(node.targetUrl.trim()));
   const tabId = await activeTabId(allowNavigation);
   const { actions } = await loadWorkspace();
-  return runGraphInternal(tabId, nodes, edges, actions, { ...variables }, {});
+  return runGraphInternal(tabId, nodes, edges, actions, { ...variables }, {}, [], progress);
 }
 
 export async function runNodes(nodes: WorkflowNode[], variables: Variables = {}): Promise<RunResult> {

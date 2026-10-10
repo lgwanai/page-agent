@@ -25,6 +25,41 @@ function clickAsUser(element: HTMLElement, detail = 1): void {
   element.click();
 }
 
+const IMPLICIT_SUBMIT_INPUT_TYPES = new Set(['text', 'search', 'tel', 'url', 'email', 'password', 'date', 'month', 'week', 'time', 'datetime-local', 'number']);
+
+function pressKeyAsUser(element: HTMLElement, key: string): void {
+  const form = element instanceof HTMLInputElement || element instanceof HTMLButtonElement
+    ? element.form : element.closest('form');
+  let submitted = false;
+  const observeSubmit = () => { submitted = true; };
+  form?.addEventListener('submit', observeSubmit, true);
+  try {
+    element.focus();
+    const keydownAllowed = element.dispatchEvent(new KeyboardEvent('keydown', { key, code: key, bubbles: true, cancelable: true }));
+    const keypressAllowed = keydownAllowed
+      ? element.dispatchEvent(new KeyboardEvent('keypress', { key, code: key, bubbles: true, cancelable: true }))
+      : false;
+    element.dispatchEvent(new KeyboardEvent('keyup', { key, code: key, bubbles: true, cancelable: true }));
+    if (key !== 'Enter' || !keydownAllowed || !keypressAllowed || submitted || !element.isConnected) return;
+    // Synthetic keyboard events do not perform native Enter activation/implicit submission.
+    // Respect page handlers first, then provide only the missing browser default action.
+    if (element instanceof HTMLButtonElement || (element instanceof HTMLInputElement && ['submit', 'image', 'button', 'reset'].includes(element.type))) {
+      element.click();
+    } else if (form && element instanceof HTMLInputElement && IMPLICIT_SUBMIT_INPUT_TYPES.has(element.type)) {
+      const controls = [...form.elements];
+      const submitter = controls.find((control) => (control instanceof HTMLButtonElement && control.type === 'submit')
+        || (control instanceof HTMLInputElement && ['submit', 'image'].includes(control.type))) as HTMLButtonElement | HTMLInputElement | undefined;
+      if (submitter) {
+        if (!submitter.disabled) submitter.click();
+      } else if (controls.filter((control) => control instanceof HTMLInputElement && IMPLICIT_SUBMIT_INPUT_TYPES.has(control.type)).length === 1) {
+        form.requestSubmit();
+      }
+    }
+  } finally {
+    form?.removeEventListener('submit', observeSubmit, true);
+  }
+}
+
 function isDisabled(element: HTMLElement): boolean {
   return (element instanceof HTMLButtonElement || element instanceof HTMLInputElement || element instanceof HTMLSelectElement || element instanceof HTMLTextAreaElement)
     ? element.disabled
@@ -43,6 +78,9 @@ function eventName(event: EventDefinition): string | undefined {
   if (event.type === 'pressKey') return 'keydown';
   if (event.type === 'hover') return 'mouseover';
   if (event.type === 'scrollIntoView') return undefined;
+  if (event.type === 'scrollPage') return 'scroll';
+  if (event.type === 'contextMenu') return 'contextmenu';
+  if (event.type === 'longPress') return 'pointerup';
   if (event.type === 'custom') return event.customEvent?.trim();
   return event.type === 'check' || event.type === 'select' ? 'change' : event.type;
 }
@@ -60,7 +98,7 @@ export async function executeEvent(element: HTMLElement, event: EventDefinition)
   element.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'center' });
   const rect = element.getBoundingClientRect();
   const style = getComputedStyle(element);
-  const userOperation = ['click', 'doubleClick', 'input', 'select', 'check', 'hover', 'focus', 'pressKey', 'submit'].includes(event.type);
+  const userOperation = ['click', 'doubleClick', 'input', 'select', 'check', 'hover', 'focus', 'pressKey', 'submit', 'contextMenu', 'longPress'].includes(event.type);
   if (userOperation && (rect.width <= 0 || rect.height <= 0 || style.display === 'none' || style.visibility === 'hidden' || style.pointerEvents === 'none' || Number(style.opacity) === 0)) {
     throw new Error('Selector 找到的节点当前不可见，无法按用户方式操作');
   }
@@ -86,6 +124,7 @@ export async function executeEvent(element: HTMLElement, event: EventDefinition)
 
   try {
     let output: unknown;
+    const inputEvidence: string[] = [];
     switch (event.type) {
       case 'click':
         clickAsUser(element);
@@ -102,11 +141,34 @@ export async function executeEvent(element: HTMLElement, event: EventDefinition)
           throw new Error('该节点不支持输入内容');
         }
         element.focus();
+        // Opening a controlled picker can schedule a render with the previous
+        // value. Complete that focus transition before writing a new draft.
+        await settle();
+        if (!element.isConnected) throw new Error('聚焦后页面替换了输入节点，请重新定位后执行');
+        inputEvidence.push(`聚焦更新后：${String(currentValue(element) ?? '')}`);
         const value = event.value ?? '';
         if (element.isContentEditable) element.textContent = value;
         else setNativeValue(element as HTMLInputElement | HTMLTextAreaElement, value);
-        dispatch(element, 'input');
+        inputEvidence.push(`设置值后：${String(currentValue(element) ?? '')}`);
+        element.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, inputType: 'insertText', data: value }));
+        // Controlled inputs can update their draft state asynchronously. Blurring in
+        // the same task lets date pickers restore their previous committed value.
+        await settle();
+        inputEvidence.push(`input 更新后：${String(currentValue(element) ?? '')}`);
+        const datePicker = element instanceof HTMLInputElement && element.type === 'text'
+          && /^\d{4}-\d{2}-\d{2}$/.test(value)
+          && !!element.closest('[class*="picker-input"], [class*="datepicker"], [class*="date-picker"]');
+        if (datePicker && element.value === value) {
+          // Only notify the date widget; do not invoke the generic Enter helper,
+          // which deliberately supplies native form submission as a fallback.
+          element.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
+          element.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
+          await settle();
+          inputEvidence.push(`日期确认后：${element.value}`);
+        }
         dispatch(element, 'change');
+        await settle();
+        inputEvidence.push(`change 更新后：${String(currentValue(element) ?? '')}`);
         element.blur();
         output = value;
         break;
@@ -141,10 +203,7 @@ export async function executeEvent(element: HTMLElement, event: EventDefinition)
       case 'blur': element.blur(); output = 'blurred'; break;
       case 'pressKey': {
         const key = event.value || 'Enter';
-        element.focus();
-        element.dispatchEvent(new KeyboardEvent('keydown', { key, code: key, bubbles: true, cancelable: true }));
-        element.dispatchEvent(new KeyboardEvent('keypress', { key, code: key, bubbles: true, cancelable: true }));
-        element.dispatchEvent(new KeyboardEvent('keyup', { key, code: key, bubbles: true, cancelable: true }));
+        pressKeyAsUser(element, key);
         output = key;
         break;
       }
@@ -156,6 +215,32 @@ export async function executeEvent(element: HTMLElement, event: EventDefinition)
         break;
       }
       case 'scrollIntoView': output = 'scrolled'; break;
+      case 'scrollPage': {
+        let position = { x: 0, y: 0 };
+        try { position = JSON.parse(event.value || '{}') as { x: number; y: number }; } catch { /* use origin */ }
+        if (element === document.documentElement || element === document.body) {
+          window.scrollTo({ left: Number(position.x) || 0, top: Number(position.y) || 0, behavior: 'auto' });
+        } else {
+          element.scrollTo({ left: Number(position.x) || 0, top: Number(position.y) || 0, behavior: 'auto' });
+        }
+        output = position;
+        break;
+      }
+      case 'contextMenu':
+        element.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, view: window, button: 2, buttons: 2 }));
+        output = 'context menu';
+        break;
+      case 'longPress': {
+        const duration = Math.max(650, Math.min(5000, Number(event.value) || 650));
+        const mouse = { bubbles: true, cancelable: true, view: window, button: 0, buttons: 1 };
+        element.dispatchEvent(new PointerEvent('pointerdown', { ...mouse, pointerId: 1, pointerType: 'mouse', isPrimary: true }));
+        element.dispatchEvent(new MouseEvent('mousedown', mouse));
+        await new Promise((resolve) => window.setTimeout(resolve, duration));
+        element.dispatchEvent(new PointerEvent('pointerup', { ...mouse, buttons: 0, pointerId: 1, pointerType: 'mouse', isPrimary: true }));
+        element.dispatchEvent(new MouseEvent('mouseup', { ...mouse, buttons: 0 }));
+        output = duration;
+        break;
+      }
       case 'custom': {
         const type = event.customEvent?.trim();
         if (!type) throw new Error('请输入自定义事件名称');
@@ -166,7 +251,7 @@ export async function executeEvent(element: HTMLElement, event: EventDefinition)
     }
 
     await settle();
-    const evidence = [observed ? `已捕获 ${expectedEvent} 事件` : '', mutationCount ? `页面发生 ${mutationCount} 处变化` : '']
+    const evidence = [...inputEvidence, observed ? `已捕获 ${expectedEvent} 事件` : '', mutationCount ? `页面发生 ${mutationCount} 处变化` : '']
       .filter(Boolean);
 
     if (event.type === 'input') {
@@ -200,6 +285,14 @@ export async function executeEvent(element: HTMLElement, event: EventDefinition)
       const rect = element.getBoundingClientRect();
       const actual = rect.bottom > 0 && rect.top < innerHeight && rect.right > 0 && rect.left < innerWidth;
       return { output, verification: verification(actual, actual ? '节点已进入可视区域' : '滚动后节点仍不在可视区域', true, actual, evidence) };
+    }
+    if (event.type === 'scrollPage') {
+      let expected = { x: 0, y: 0 };
+      try { expected = JSON.parse(event.value || '{}') as { x: number; y: number }; } catch { /* use origin */ }
+      const page = element === document.documentElement || element === document.body;
+      const actual = { x: Math.round(page ? scrollX : element.scrollLeft), y: Math.round(page ? scrollY : element.scrollTop) };
+      const ok = Math.abs(actual.x - (Number(expected.x) || 0)) <= 2 && Math.abs(actual.y - (Number(expected.y) || 0)) <= 2;
+      return { output, verification: verification(ok, ok ? '页面滚动位置已验证' : '页面没有滚动到录制位置', expected, actual, evidence) };
     }
 
     const ok = observed;

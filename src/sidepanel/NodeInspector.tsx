@@ -1,9 +1,9 @@
 import {
   allowedEventsForTarget, createId, EVENT_LABELS, NODE_KIND_LABELS, START_INPUT_TYPE_LABELS, type ActionDefinition,
-  type AiInputBinding, type EventDefinition, type PageTarget, type StartInputDeclaration, type StartInputType, type WorkflowNode,
+  type AiInputBinding, type DomQuery, type DomQueryMatch, type EventDefinition, type PageTarget, type RunResult, type StartInputDeclaration, type StartInputType, type WorkflowNode,
 } from '@/types/workflow';
 
-export function NodeInspector({ node, nodes, actions, onChange, onDelete, onRun, onClose, onPickAiSelector, notify }: {
+export function NodeInspector({ node, nodes, actions, onChange, onDelete, onRun, onClose, onPickAiSelector, onPickQueryScope, lastRun, notify }: {
   node: WorkflowNode | undefined;
   nodes: WorkflowNode[];
   actions: ActionDefinition[];
@@ -12,13 +12,20 @@ export function NodeInspector({ node, nodes, actions, onChange, onDelete, onRun,
   onRun: () => void;
   onClose: () => void;
   onPickAiSelector: () => void;
+  onPickQueryScope: () => void;
+  lastRun: RunResult | null;
   notify: (message: string) => void;
 }) {
   if (!node) return <aside className="node-inspector empty-inspector"><strong>节点设置</strong><p>在画布中选择节点编辑属性。每张执行卡片都有成功和失败出口，连接后即形成顺序逻辑。</p></aside>;
   const updateName = (name: string) => {
     if (nodes.some((item) => item.id !== node.id && item.name === name)) return notify(`节点名称「${name}」已存在`);
-    onChange(node.kind === 'dom' ? { ...node, name, target: { ...node.target, name } } : { ...node, name });
+    onChange(node.kind === 'dom' || node.kind === 'query' ? { ...node, name, target: { ...node.target, name } } : { ...node, name });
   };
+  const updateQuery = (patch: Partial<DomQuery>) => {
+    if (node.kind === 'query') onChange({ ...node, query: { ...node.query, ...patch } });
+  };
+  const queryStep = node.kind === 'query' ? lastRun?.steps.slice().reverse().find((step) => step.nodeId === node.id) : undefined;
+  const queryMatches = queryStep?.ok && Array.isArray(queryStep.data) ? queryStep.data as DomQueryMatch[] : undefined;
   const updateEvent = (patch: Partial<EventDefinition>) => {
     if (node.kind !== 'dom' && node.kind !== 'ai') return;
     onChange({ ...node, event: { ...node.event, ...patch } });
@@ -72,7 +79,7 @@ export function NodeInspector({ node, nodes, actions, onChange, onDelete, onRun,
         </div>)}
         <div className="input-actions single-action"><button className="secondary" onClick={addStartInput}>＋ 添加输入参数</button></div>
       </div>
-      <label>目标页面 URL<input value={node.targetUrl} placeholder="留空则使用当前页面，支持 {{变量}}" onChange={(event) => onChange({ ...node, targetUrl: event.target.value })} /><small>运行流程时先打开此页面；如果已经在目标页面则不会重复跳转。</small></label>
+      <label>目标页面 URL<input value={node.targetUrl} placeholder="留空则使用当前页面，支持 {{变量}}" onChange={(event) => onChange({ ...node, targetUrl: event.target.value })} /><small>每次运行先重新打开此地址并等待新页面加载；只有留空才使用当前页面。</small></label>
       <label className="check-label"><input type="checkbox" checked={node.strictValidation} onChange={(event) => onChange({ ...node, strictValidation: event.target.checked })} />开启强校验（包含查询参数）</label>
       <label className="check-label"><input type="checkbox" checked={node.waitForLogin} onChange={(event) => onChange({ ...node, waitForLogin: event.target.checked })} />跳转到登录页时，等待登录完成后自动继续</label>
       <div className="field-grid"><label>页面加载超时（秒）<input type="number" min="1" max="300" value={Math.round(node.loadTimeoutMs / 1000)} onChange={(event) => onChange({ ...node, loadTimeoutMs: Number(event.target.value) * 1000 })} /></label><label>页面稳定等待（毫秒）<input type="number" min="0" max="60000" value={node.settleDelayMs} onChange={(event) => onChange({ ...node, settleDelayMs: Number(event.target.value) })} /></label></div>
@@ -85,6 +92,32 @@ export function NodeInspector({ node, nodes, actions, onChange, onDelete, onRun,
       <label>Selector<textarea className="code-input" value={node.target.selector} onChange={(event) => onChange({ ...node, target: { ...node.target, selector: event.target.value } })} /></label>
       <div className="field-grid"><label>元素类型<input value={node.target.tagName} disabled /></label><label>Frame<input value={node.target.frameId} disabled /></label></div>
       <EventEditor target={node.target} event={node.event} onChange={updateEvent} />
+    </>}
+    {node.kind === 'calendar' && <>
+      <button className="secondary" onClick={onPickQueryScope}>⌖ 选择日历容器</button>
+      <label>日历容器 Selector<textarea value={node.target.selector} onChange={(event) => onChange({ ...node, target: { ...node.target, selector: event.target.value } })} /></label>
+      <label>选择方式<select value={node.mode} onChange={(event) => onChange({ ...node, mode: event.target.value as 'single' | 'range' })}><option value="single">选择一个日期（也可用于区间的一端）</option><option value="range">选择开始和结束日期</option></select></label>
+      <label>目标日期<input value={node.date} placeholder="2026-10-01 或 {{start_time}}" onChange={(event) => onChange({ ...node, date: event.target.value })} /></label>
+      {node.mode === 'range' && <label>结束日期<input value={node.endDate} placeholder="2026-10-10 或 {{end_time}}" onChange={(event) => onChange({ ...node, endDate: event.target.value })} /></label>}
+      <p className="input-hint">先通过上游点击节点打开日历，再运行此节点。自动识别年月并翻页；禁用日期或识别不明确时走失败路径，不会盲目点击。</p>
+    </>}
+
+    {node.kind === 'query' && <>
+      <button className="secondary" onClick={onPickQueryScope}>⌖ 在网页选择检索范围</button>
+      <label>或使用已选 DOM<select value="" onChange={(event) => {
+        const source = nodes.find((item) => item.id === event.target.value);
+        if (source?.kind === 'dom' || source?.kind === 'query') onChange({ ...node, target: { ...source.target, name: node.name } });
+      }}><option value="">从节点列表选择范围</option>{nodes.filter((item) => item.id !== node.id && (item.kind === 'dom' || item.kind === 'query')).map((item) => <option key={item.id} value={item.id}>{item.name} · {NODE_KIND_LABELS[item.kind]}</option>)}</select></label>
+      <label>范围 Selector<textarea className="code-input" value={node.target.selector} placeholder="先选择页面中的容器，或填写 {{变量}}" onChange={(event) => onChange({ ...node, target: { ...node.target, selector: event.target.value } })} /><small>遍历范围内的 DOM，不触发页面事件。Frame：{node.target.frameId}</small></label>
+      <label>候选元素<input value={node.query.candidateSelector} placeholder="*（全部）、input、a、.item" onChange={(event) => updateQuery({ candidateSelector: event.target.value })} /><small>可留空检索全部后代；填写 CSS selector 可缩小候选范围。</small></label>
+      <label className="check-label"><input type="checkbox" checked={node.query.includeRoot} onChange={(event) => updateQuery({ includeRoot: event.target.checked })} />同时检索选中的元素本身</label>
+      <label>检索内容<select value={node.query.source} onChange={(event) => updateQuery({ source: event.target.value as DomQuery['source'] })}><option value="attribute">DOM 属性</option><option value="value">DOM 值</option><option value="text">文本内容</option></select><small>DOM 值读取输入框、选项框的当前 value；其他元素读取文本。</small></label>
+      {node.query.source === 'attribute' && <label>属性名称<input value={node.query.attributeName} placeholder="例如 href、class、data-id，支持 {{变量}}" onChange={(event) => updateQuery({ attributeName: event.target.value })} /></label>}
+      <label>匹配方式<select value={node.query.match} onChange={(event) => updateQuery({ match: event.target.value as DomQuery['match'] })}><option value="exists">{node.query.source === 'attribute' ? '存在该属性' : '全部值（不筛选）'}</option><option value="equals">完全相同</option><option value="contains">包含内容</option><option value="regex">正则匹配</option></select></label>
+      {node.query.match !== 'exists' && <label>{node.query.match === 'regex' ? '正则表达式' : '匹配内容'}<input value={node.query.pattern} placeholder={node.query.match === 'regex' ? '^订单\\d+$（无需 /，支持 {{变量}}）' : '支持 {{变量}}'} onChange={(event) => updateQuery({ pattern: event.target.value })} /></label>}
+      {node.query.match === 'regex' && <label>正则选项<input value={node.query.regexFlags} placeholder="例如 i 忽略大小写、m 多行；可留空" onChange={(event) => updateQuery({ regexFlags: event.target.value })} /></label>}
+      <div className="port-help">输出 DOM 列表：<code>{`{{${node.name}.output}}`}</code><br />循环可用 <code>{'{{item.selector}}'}</code>、<code>{'{{item.value}}'}</code>、<code>{'{{item.attributes.href}}'}</code>；AI 输入可选择此节点。没有匹配项返回空列表，范围不存在或配置无效走失败出口。</div>
+      {queryStep && <div className="query-results"><strong>{queryStep.message}</strong>{queryMatches && <details><summary>查看匹配 DOM（{queryMatches.length}）</summary>{queryMatches.map((item, index) => <div key={`${item.selector}_${index}`}><code>{item.selector}</code><span>{item.matchedValue || '（空值）'}</span></div>)}</details>}</div>}
     </>}
 
     {node.kind === 'ai' && <>
@@ -103,7 +136,7 @@ export function NodeInspector({ node, nodes, actions, onChange, onDelete, onRun,
     </>}
 
     {node.kind === 'loop' && <>
-      <label>遍历数组<input value={node.items} placeholder="{{AI节点.output.items}} 或 [1,2,3]" onChange={(event) => onChange({ ...node, items: event.target.value })} /></label>
+      <label>遍历数组<input value={node.items} placeholder="{{Query.output}}、{{AI节点.output.items}} 或 [1,2,3]" onChange={(event) => onChange({ ...node, items: event.target.value })} /></label>
       <div className="field-grid"><label>当前项变量<input value={node.itemVariable} onChange={(event) => onChange({ ...node, itemVariable: event.target.value })} /></label><label>索引变量<input value={node.indexVariable} onChange={(event) => onChange({ ...node, indexVariable: event.target.value })} /></label></div>
       <label>最大循环次数<input type="number" min="1" max="1000" value={node.maxIterations} onChange={(event) => onChange({ ...node, maxIterations: Number(event.target.value) })} /></label>
       <div className="port-help">遍历端口连接循环体，循环体最后一个节点需要连回本循环节点；完成端口连接循环后的流程。</div>
@@ -111,7 +144,7 @@ export function NodeInspector({ node, nodes, actions, onChange, onDelete, onRun,
 
     {node.kind === 'wait' && <label>等待毫秒<input type="number" min="0" max="60000" value={node.durationMs} onChange={(event) => onChange({ ...node, durationMs: Number(event.target.value) })} /></label>}
     {node.kind === 'action' && <label>选择 Action<select value={node.actionId} onChange={(event) => onChange({ ...node, actionId: event.target.value })}><option value="">请选择</option>{actions.map((action) => <option value={action.id} key={action.id}>{action.name}</option>)}</select></label>}
-    {node.kind !== 'loop' && node.kind !== 'start' && <div className="port-help"><strong>自动验收</strong><br />Page Agent 会根据操作类型检查真实页面状态；结果符合预期走成功出口，否则走失败出口。没有失败连线时终止流程。</div>}
+    {node.kind !== 'loop' && node.kind !== 'start' && node.kind !== 'query' && <div className="port-help"><strong>自动验收</strong><br />Page Agent 会根据操作类型检查真实页面状态；结果符合预期走成功出口，否则走失败出口。没有失败连线时终止流程。</div>}
   </aside>;
 }
 
@@ -122,6 +155,11 @@ function EventEditor({ target, event, onChange }: {
 }) {
   const options = allowedEventsForTarget(target);
   const changeType = (type: EventDefinition['type']) => onChange({ type, value: undefined, customEvent: undefined });
+  let scrollPosition = { x: 0, y: 0 };
+  if (event.type === 'scrollPage') {
+    try { scrollPosition = JSON.parse(event.value || '{}') as { x: number; y: number }; } catch { /* keep origin */ }
+  }
+  const updateScroll = (axis: 'x' | 'y', value: number) => onChange({ value: JSON.stringify({ ...scrollPosition, [axis]: value }) });
   return <>
     <label>操作<select value={event.type} onChange={(item) => changeType(item.target.value as EventDefinition['type'])}>{options.map((value) => <option key={value} value={value}>{EVENT_LABELS[value]}</option>)}</select><small>已根据 {target.tagName}{target.attributes?.type ? ` · ${target.attributes.type}` : ''} 元素筛选可用操作。</small></label>
     {event.type === 'input' && <label>输入内容<input value={event.value ?? ''} placeholder="支持 {{变量}}" onChange={(item) => onChange({ value: item.target.value })} /></label>}
@@ -130,6 +168,8 @@ function EventEditor({ target, event, onChange }: {
       : <input value={event.value ?? ''} placeholder="选项 value 或 {{变量}}" onChange={(item) => onChange({ value: item.target.value })} />}</label>}
     {event.type === 'check' && <label>目标状态<select value={event.value ?? ''} onChange={(item) => onChange({ value: item.target.value || undefined })}><option value="">切换当前状态</option><option value="true">勾选</option><option value="false">取消勾选</option></select></label>}
     {event.type === 'pressKey' && <label>按键<input value={event.value ?? ''} placeholder="Enter、Escape 或 {{变量}}" onChange={(item) => onChange({ value: item.target.value })} /></label>}
+    {event.type === 'longPress' && <label>长按时长（毫秒）<input type="number" min="650" max="5000" value={Number(event.value) || 650} onChange={(item) => onChange({ value: item.target.value })} /></label>}
+    {event.type === 'scrollPage' && <div className="field-grid"><label>横向位置<input type="number" value={Number(scrollPosition.x) || 0} onChange={(item) => updateScroll('x', Number(item.target.value))} /></label><label>纵向位置<input type="number" value={Number(scrollPosition.y) || 0} onChange={(item) => updateScroll('y', Number(item.target.value))} /></label></div>}
     {event.type === 'custom' && <><label>自定义事件名<input value={event.customEvent ?? ''} onChange={(item) => onChange({ customEvent: item.target.value })} /></label><label>事件数据<input value={event.value ?? ''} placeholder="可选，支持 {{变量}}" onChange={(item) => onChange({ value: item.target.value })} /></label></>}
   </>;
 }

@@ -10,12 +10,17 @@ export type FriendlyEventType =
   | 'pressKey'
   | 'submit'
   | 'scrollIntoView'
+  | 'scrollPage'
+  | 'contextMenu'
+  | 'longPress'
   | 'custom';
 
 export interface PageTarget {
   name: string;
   selector: string;
   frameId: number;
+  /** Stable document identity; Chrome frame IDs change after navigation. */
+  frameUrl?: string;
   tagName: string;
   label: string;
   text?: string;
@@ -28,6 +33,8 @@ export interface EventDefinition {
   value?: string;
   customEvent?: string;
 }
+
+export type RecordedTargetHint = Pick<PageTarget, 'tagName' | 'attributes' | 'text'>;
 
 interface BaseNode {
   id: string;
@@ -70,6 +77,35 @@ export interface DomNode extends BaseNode {
   event: EventDefinition;
 }
 
+export interface DomQuery {
+  candidateSelector: string;
+  includeRoot: boolean;
+  source: 'attribute' | 'value' | 'text';
+  attributeName: string;
+  match: 'exists' | 'equals' | 'contains' | 'regex';
+  pattern: string;
+  regexFlags: string;
+}
+
+export interface QueryNode extends BaseNode {
+  kind: 'query';
+  target: PageTarget;
+  query: DomQuery;
+}
+
+/** Serializable DOM snapshots, not live DOM references. */
+export interface DomQueryMatch extends PageTarget {
+  value: string;
+  text: string;
+  matchedValue: string;
+  attributes: Record<string, string>;
+}
+
+export const DEFAULT_DOM_QUERY: DomQuery = {
+  candidateSelector: '*', includeRoot: true, source: 'value', attributeName: '',
+  match: 'exists', pattern: '', regexFlags: '',
+};
+
 export interface AiNode extends BaseNode {
   kind: 'ai';
   instruction: string;
@@ -110,7 +146,14 @@ export interface LoopNode extends BaseNode {
   maxIterations: number;
 }
 
-export type WorkflowNode = StartNode | DomNode | AiNode | ActionNode | WaitNode | LoopNode;
+export interface CalendarNode extends BaseNode {
+  kind: 'calendar';
+  target: PageTarget;
+  date: string;
+  endDate: string;
+  mode: 'single' | 'range';
+}
+export type WorkflowNode = StartNode | DomNode | QueryNode | CalendarNode | AiNode | ActionNode | WaitNode | LoopNode;
 
 export type EdgePort = 'success' | 'failure' | 'body' | 'done';
 
@@ -141,6 +184,34 @@ export interface ScriptDefinition {
   createdAt: number;
   updatedAt: number;
   lastRunAt?: number;
+}
+
+/** ScriptDefinition is kept as a storage/API compatibility name. In the UI it is a workflow. */
+export type WorkflowDefinition = ScriptDefinition;
+
+export interface RecordedPageEvent {
+  id: string;
+  timestamp: number;
+  url: string;
+  target: PageTarget;
+  event: EventDefinition;
+}
+
+export interface RecordingResult {
+  startedAt: number;
+  stoppedAt: number;
+  startUrl: string;
+  eventCount: number;
+  nodes: WorkflowNode[];
+  edges: WorkflowEdge[];
+}
+
+export interface WorkflowExportFile {
+  $schema: 'https://page-agent.dev/schemas/workflow-v1.json';
+  schemaVersion: 1;
+  kind: 'page-agent-workflow';
+  exportedAt: string;
+  workflow: WorkflowDefinition;
 }
 
 export interface WorkspaceState {
@@ -185,6 +256,9 @@ export const EVENT_LABELS: Record<FriendlyEventType, string> = {
   pressKey: '按键',
   submit: '提交表单',
   scrollIntoView: '滚动到节点',
+  scrollPage: '滚动页面 / 区域',
+  contextMenu: '右键点击',
+  longPress: '长按',
   custom: '自定义 Web 事件',
 };
 
@@ -202,19 +276,23 @@ export function allowedEventsForTarget(target: PageTarget): FriendlyEventType[] 
   const inputType = (attributes.type ?? '').toLowerCase();
   const role = (attributes.role ?? '').toLowerCase();
   const contentEditable = attributes.contenteditable === '' || attributes.contenteditable === 'true';
+  const withRecordedScroll = (events: FriendlyEventType[]): FriendlyEventType[] => attributes._pageAgentScrollable === 'true' && !events.includes('scrollPage')
+    ? ['scrollPage', ...events]
+    : events;
 
-  if (tag === 'select') return ['select', 'click', 'focus', 'blur', 'pressKey', 'hover', 'scrollIntoView', 'custom'];
+  if (tag === 'html' || tag === 'body') return ['scrollPage', 'click', 'contextMenu', 'custom'];
+  if (tag === 'select') return withRecordedScroll(['select', 'click', 'focus', 'blur', 'pressKey', 'hover', 'contextMenu', 'longPress', 'scrollIntoView', 'custom']);
   if (tag === 'textarea' || contentEditable || (tag === 'input' && TEXT_INPUT_TYPES.has(inputType))) {
-    return ['input', 'click', 'focus', 'blur', 'pressKey', 'hover', 'scrollIntoView', 'custom'];
+    return withRecordedScroll(['input', 'click', 'focus', 'blur', 'pressKey', 'hover', 'contextMenu', 'longPress', 'scrollIntoView', 'custom']);
   }
   if (tag === 'input' && (inputType === 'checkbox' || inputType === 'radio')) {
-    return ['check', 'click', 'focus', 'blur', 'pressKey', 'hover', 'scrollIntoView', 'custom'];
+    return withRecordedScroll(['check', 'click', 'focus', 'blur', 'pressKey', 'hover', 'contextMenu', 'longPress', 'scrollIntoView', 'custom']);
   }
-  if (tag === 'form') return ['submit', 'click', 'hover', 'scrollIntoView', 'custom'];
+  if (tag === 'form') return withRecordedScroll(['submit', 'click', 'hover', 'contextMenu', 'longPress', 'scrollIntoView', 'custom']);
   if (tag === 'button' || tag === 'a' || CLICK_ROLES.has(role) || (tag === 'input' && CLICK_INPUT_TYPES.has(inputType))) {
-    return ['click', 'doubleClick', 'focus', 'blur', 'pressKey', 'hover', 'scrollIntoView', 'custom'];
+    return withRecordedScroll(['click', 'doubleClick', 'focus', 'blur', 'pressKey', 'hover', 'contextMenu', 'longPress', 'scrollIntoView', 'custom']);
   }
-  return ['click', 'doubleClick', 'hover', 'scrollIntoView', 'custom'];
+  return withRecordedScroll(['click', 'doubleClick', 'hover', 'contextMenu', 'longPress', 'scrollIntoView', 'custom']);
 }
 
 /** Best initial operation after a selector has been captured. */
@@ -226,7 +304,7 @@ export function defaultEventForTarget(target: PageTarget): EventDefinition {
 }
 
 export const NODE_KIND_LABELS: Record<WorkflowNode['kind'], string> = {
-  start: '开始', dom: '网页节点', ai: 'AI 节点', action: 'Action', wait: '等待', loop: '循环',
+  start: '开始', dom: '网页节点', query: 'Query 检索', calendar: '日历选择器', ai: 'AI 节点', action: 'Action', wait: '等待', loop: '循环',
 };
 
 export function createId(prefix: string): string {

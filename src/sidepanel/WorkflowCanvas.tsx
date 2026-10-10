@@ -5,10 +5,13 @@ import {
   useClientContext, useNodeRender,
 } from '@flowgram.ai/free-layout-editor';
 import '@flowgram.ai/free-layout-editor/index.css';
-import { createId, NODE_KIND_LABELS, type EdgePort, type WorkflowEdge, type WorkflowNode } from '@/types/workflow';
+import { createId, NODE_KIND_LABELS, type EdgePort, type StepResult, type WorkflowEdge, type WorkflowNode } from '@/types/workflow';
 import { selectedWorkflowNodeId, type SelectableEntity } from './canvas-selection';
 
 interface CanvasProps {
+  activeNodeId?: string | null;
+  nodeLogs?: Record<string, StepResult[]>;
+  onShowLogs?: (nodeId: string) => void;
   nodes: WorkflowNode[];
   edges: WorkflowEdge[];
   onChange: (nodes: WorkflowNode[], edges: WorkflowEdge[]) => void;
@@ -25,6 +28,8 @@ const successFailurePorts: WorkflowPort[] = [
 const PORTS: Record<WorkflowNode['kind'], WorkflowPort[]> = {
   start: [...successFailurePorts],
   dom: [inputPort, ...successFailurePorts],
+  query: [inputPort, ...successFailurePorts],
+  calendar: [inputPort, ...successFailurePorts],
   ai: [inputPort, ...successFailurePorts],
   action: [inputPort, ...successFailurePorts],
   wait: [inputPort, ...successFailurePorts],
@@ -38,11 +43,14 @@ const PORTS: Record<WorkflowNode['kind'], WorkflowPort[]> = {
 
 const PortActionContext = createContext<CanvasProps['onAddFromPort']>(() => undefined);
 const NodeSelectContext = createContext<CanvasProps['onSelect']>(() => undefined);
+const RunContext = createContext<Pick<CanvasProps, 'activeNodeId' | 'nodeLogs' | 'onShowLogs'>>({});
 
 function nodeSummary(node: WorkflowNode): string {
   let summary: string;
   if (node.kind === 'start') summary = `${node.inputs?.length ?? 0} 个参数 · ${node.targetUrl || '使用当前页面'}`;
   else if (node.kind === 'dom') summary = `${node.event.type} · ${node.target.tagName}`;
+  else if (node.kind === 'calendar') summary = `${node.date || '未配置日期'}${node.mode === 'range' ? ` 至 ${node.endDate || '未配置结束日期'}` : ''}`;
+  else if (node.kind === 'query') summary = `${node.query.source === 'attribute' ? node.query.attributeName || '属性' : node.query.source === 'text' ? '文本' : 'DOM 值'} · ${node.target.selector || '未选择检索范围'}`;
   else if (node.kind === 'ai') summary = `${node.inputs.length} 个输入 · ${node.instruction || '未填写指令'}`;
   else if (node.kind === 'loop') summary = `遍历 ${node.items || '未配置数组'}`;
   else if (node.kind === 'wait') summary = `${node.durationMs}ms`;
@@ -57,7 +65,7 @@ function CanvasNodeForm() {
         const config = field.value;
         if (!config) return <div className="canvas-node-body">节点数据不可用</div>;
         return <>
-          <div className="canvas-node-head"><span>{config.kind === 'start' ? '▶' : config.kind === 'ai' ? '✦' : config.kind === 'dom' ? '⌖' : config.kind === 'loop' ? '↻' : '●'}</span><strong>{config.name}</strong></div>
+          <div className="canvas-node-head"><span>{config.kind === 'start' ? '▶' : config.kind === 'ai' ? '✦' : config.kind === 'dom' ? '⌖' : config.kind === 'query' ? '⌕' : config.kind === 'loop' ? '↻' : '●'}</span><strong>{config.name}</strong></div>
           <div className="canvas-node-body"><em>{NODE_KIND_LABELS[config.kind]}</em><p>{nodeSummary(config)}</p></div>
         </>;
       }}
@@ -69,10 +77,13 @@ function CanvasNode(props: WorkflowNodeProps) {
   const { node, form } = useNodeRender();
   const onAddFromPort = useContext(PortActionContext);
   const onSelect = useContext(NodeSelectContext);
+  const { activeNodeId, nodeLogs, onShowLogs } = useContext(RunContext);
+  const logs = nodeLogs?.[node.id] ?? [];
+  const failed = logs.some((step) => !step.ok);
   const meta = node.getNodeMeta<FlowNodeMeta>();
   return (
     <WorkflowNodeRenderer
-      className={`pa-canvas-node canvas-${String(node.flowNodeType)}`}
+      className={`pa-canvas-node canvas-${String(node.flowNodeType)}${activeNodeId === node.id ? ' node-running' : ''}${failed ? ' node-failed' : ''}`}
       node={props.node}
       style={meta.wrapperStyle}
       portClassName="pa-workflow-port"
@@ -87,6 +98,7 @@ function CanvasNode(props: WorkflowNodeProps) {
       <div className="canvas-node-content" onClick={() => onSelect(node.id)}>
         {form?.render() ?? <div className="canvas-node-body">节点数据不可用</div>}
       </div>
+      {logs.length > 0 && <button className={`canvas-node-log ${failed ? 'log-failure' : 'log-success'}`} onMouseDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onShowLogs?.(node.id); }}><strong>{failed ? '执行失败' : '执行成功'} · {logs.length} 条日志</strong><span>{logs[logs.length - 1].message}</span><small>点击查看详情</small></button>}
     </WorkflowNodeRenderer>
   );
 }
@@ -157,12 +169,15 @@ function CanvasBridge({ graph, lastInternal, onChange, onSelect }: {
   return null;
 }
 
-export function WorkflowCanvas({ nodes, edges, onChange, onSelect, onAddFromPort }: CanvasProps) {
+export function WorkflowCanvas({ nodes, edges, onChange, onSelect, onAddFromPort, activeNodeId, nodeLogs, onShowLogs }: CanvasProps) {
   const graph = useMemo(() => toCanvas(nodes, edges), [nodes, edges]);
   const lastInternal = useRef('');
   const contextRef = useRef<FreeLayoutPluginContext>(null);
   const props = useMemo<FreeLayoutProps>(() => ({
     background: true,
+    // FlowGram's mouse mode pans empty space and zooms around the wheel pointer.
+    // `ineractiveType` is the spelling used by the installed FlowGram API.
+    playground: { ineractiveType: 'MOUSE' },
     initialData: graph,
     nodeRegistries,
     nodeEngine: { enable: true },
@@ -176,13 +191,16 @@ export function WorkflowCanvas({ nodes, edges, onChange, onSelect, onAddFromPort
 
   return (
     <div className="workflow-canvas">
+      <div className="canvas-interaction-hint">拖动空白处平移 · 滚轮缩放 · Shift + 拖动框选</div>
       <PortActionContext.Provider value={onAddFromPort}>
+        <RunContext.Provider value={{ activeNodeId, nodeLogs, onShowLogs }}>
         <NodeSelectContext.Provider value={onSelect}>
           <FreeLayoutEditorProvider ref={contextRef} {...props}>
             <EditorRenderer className="workflow-editor" />
             <CanvasBridge graph={graph} lastInternal={lastInternal} onChange={onChange} onSelect={onSelect} />
           </FreeLayoutEditorProvider>
         </NodeSelectContext.Provider>
+        </RunContext.Provider>
       </PortActionContext.Provider>
     </div>
   );

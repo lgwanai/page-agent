@@ -60,6 +60,7 @@ describe('workspace graph migration', () => {
 
     const workspace = await loadWorkspace();
     expect(workspace.scripts).toHaveLength(1);
+    expect(workspace.scripts[0].id).toMatch(/^[0-9a-f-]{36}$/);
     expect(workspace.draft).toEqual([]);
     expect(workspace.draftEdges).toEqual([]);
   });

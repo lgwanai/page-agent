@@ -14,7 +14,10 @@ describe('workflow contract', () => {
     expect(EVENT_LABELS.input).toBe('输入内容');
     expect(EVENT_LABELS.select).toBe('选择选项');
     expect(EVENT_LABELS.custom).toBe('自定义 Web 事件');
-    expect(Object.keys(EVENT_LABELS)).toHaveLength(12);
+    expect(EVENT_LABELS.scrollPage).toBe('滚动页面 / 区域');
+    expect(EVENT_LABELS.contextMenu).toBe('右键点击');
+    expect(EVENT_LABELS.longPress).toBe('长按');
+    expect(Object.keys(EVENT_LABELS)).toHaveLength(15);
   });
 
   it.each([

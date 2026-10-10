@@ -1,4 +1,4 @@
-import { allowedEventsForTarget, createStartNode, defaultEventForTarget, type WorkflowEdge, type WorkflowNode, type WorkspaceState } from '@/types/workflow';
+import { allowedEventsForTarget, createStartNode, defaultEventForTarget, DEFAULT_DOM_QUERY, type WorkflowEdge, type WorkflowNode, type WorkspaceState } from '@/types/workflow';
 
 const STORAGE_KEY = 'pageAgentLibraryV2';
 const LEGACY_STORAGE_KEY = 'pageAgentWorkspaceV1';
@@ -41,6 +41,14 @@ function migrateNodes(nodes: WorkspaceState['draft']): WorkspaceState['draft'] {
       return { ...node, position, target, event };
     }
     if (node.kind === 'ai') return { ...node, position, inputs: node.inputs ?? [] };
+    if (node.kind === 'query') return {
+      ...node, position,
+      target: {
+        ...node.target, name: node.target?.name || node.name, selector: node.target?.selector ?? '',
+        frameId: node.target?.frameId ?? 0, tagName: node.target?.tagName ?? '', label: node.target?.label ?? '',
+      },
+      query: { ...DEFAULT_DOM_QUERY, ...node.query },
+    };
     return { ...node, position };
   });
 }
@@ -97,6 +105,7 @@ export function migrateGraph(rawNodes: unknown[], rawEdges?: unknown[]): { nodes
 export async function loadWorkspace(): Promise<WorkspaceState> {
   const value = await chrome.storage.local.get([STORAGE_KEY, LEGACY_STORAGE_KEY]);
   const stored = (value[STORAGE_KEY] ?? value[LEGACY_STORAGE_KEY]) as Partial<StoredLibraryV2 & WorkspaceState> | undefined;
+  let workflowIdsMigrated = false;
   const workspace: WorkspaceState = {
     actions: Array.isArray(stored?.actions) ? stored.actions.map((action) => {
       const graph = migrateGraph(action.nodes, action.edges);
@@ -104,7 +113,9 @@ export async function loadWorkspace(): Promise<WorkspaceState> {
     }) : [],
     scripts: Array.isArray(stored?.scripts) ? stored.scripts.map((script) => {
       const graph = migrateGraph(script.nodes, script.edges);
-      return { ...script, ...graph };
+      const validUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(script.id);
+      if (!validUuid) workflowIdsMigrated = true;
+      return { ...script, id: validUuid ? script.id : crypto.randomUUID(), ...graph };
     }) : [],
     // The editor is intentionally session-only. A saved Action or Script must be
     // explicitly opened before it becomes an editable graph again.
@@ -118,6 +129,10 @@ export async function loadWorkspace(): Promise<WorkspaceState> {
       });
     }
     await chrome.storage.local.remove(LEGACY_STORAGE_KEY);
+  } else if (workflowIdsMigrated) {
+    await chrome.storage.local.set({
+      [STORAGE_KEY]: { schemaVersion: 2, actions: workspace.actions, scripts: workspace.scripts } satisfies StoredLibraryV2,
+    });
   }
   return workspace;
 }

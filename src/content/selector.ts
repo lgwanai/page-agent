@@ -19,13 +19,14 @@ function isUnique(selector: string): boolean {
 }
 
 export function selectorFor(element: Element): string {
+  if (element === document.documentElement) return 'html';
   const html = element as HTMLElement;
   if (html.id) {
     const selector = `#${escapeCss(html.id)}`;
     if (isUnique(selector)) return selector;
   }
 
-  for (const attribute of ['data-testid', 'data-test', 'data-qa', 'name', 'aria-label']) {
+  for (const attribute of ['data-testid', 'data-test', 'data-qa', 'name', 'aria-label', 'placeholder']) {
     const value = element.getAttribute(attribute);
     if (!value) continue;
     const selector = `${element.tagName.toLowerCase()}[${attribute}="${escapeCss(value)}"]`;
@@ -37,7 +38,7 @@ export function selectorFor(element: Element): string {
   while (current && current !== document.documentElement) {
     let part = current.tagName.toLowerCase();
     const stableClasses = [...current.classList]
-      .filter((name) => !/^(active|focus|hover|selected|css-|jsx-|ng-|v-)/i.test(name))
+      .filter((name) => !/^(css-|jsx-|ng-|v-)/i.test(name) && !/(^|[-_])(active|focus|focused|hover|selected)([-_]|$)/i.test(name))
       .slice(0, 2);
     if (stableClasses.length) part += stableClasses.map((name) => `.${escapeCss(name)}`).join('');
 
@@ -74,7 +75,7 @@ function selectionTarget(element: Element): Element {
   return element.closest('button,a,input,textarea,select,option,label,summary,[contenteditable="true"],[role="button"],[role="link"],[role="option"],[role="menuitem"],[onclick]') ?? element;
 }
 
-function describe(element: Element): Omit<PageTarget, 'frameId'> {
+export function describeElement(element: Element): Omit<PageTarget, 'frameId'> {
   const attributes: Record<string, string> = {};
   for (const key of ['id', 'name', 'type', 'role', 'aria-label', 'placeholder', 'data-testid', 'contenteditable', 'disabled', 'multiple', 'tabindex']) {
     const value = element.getAttribute(key);
@@ -89,6 +90,7 @@ function describe(element: Element): Omit<PageTarget, 'frameId'> {
   return {
     name: '',
     selector: selectorFor(element),
+    frameUrl: location.href,
     tagName: element.tagName.toLowerCase(),
     label: elementLabel(element),
     text: (element.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 160),
@@ -102,7 +104,7 @@ export function stopSelecting(): void {
   cleanupActiveSelector = null;
 }
 
-export function startSelecting(onSelect: (target: Omit<PageTarget, 'frameId'>) => void): void {
+export function startSelecting(onSelect: (target: Omit<PageTarget, 'frameId'>) => void, exactElement = false): void {
   stopSelecting();
   if (!document.documentElement) return;
 
@@ -138,7 +140,7 @@ export function startSelecting(onSelect: (target: Omit<PageTarget, 'frameId'>) =
     if (overlay.style.pointerEvents === 'none' && event.target instanceof HTMLIFrameElement) return;
     overlay.style.pointerEvents = 'auto';
     const rawTarget = underlying(event.clientX, event.clientY);
-    hovered = rawTarget ? selectionTarget(rawTarget) : null;
+    hovered = rawTarget ? exactElement ? rawTarget : selectionTarget(rawTarget) : null;
     if (!hovered) return;
     const rect = hovered.getBoundingClientRect();
     Object.assign(highlight.style, {
@@ -156,9 +158,9 @@ export function startSelecting(onSelect: (target: Omit<PageTarget, 'frameId'>) =
     event.preventDefault();
     event.stopImmediatePropagation();
     const rawTarget = hovered ? null : underlying(event.clientX, event.clientY);
-    hovered ??= rawTarget ? selectionTarget(rawTarget) : null;
+    hovered ??= rawTarget ? exactElement ? rawTarget : selectionTarget(rawTarget) : null;
     if (!hovered) return;
-    const selected = describe(hovered);
+    const selected = describeElement(hovered);
     stopSelecting();
     onSelect(selected);
   };

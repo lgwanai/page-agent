@@ -1,22 +1,25 @@
 import 'reflect-metadata';
-import { useCallback, useEffect, useState } from 'react';
-import { createRoot } from 'react-dom/client';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { RuntimeMessage, RuntimeResponse } from '@/types/messages';
 import type { AiProviderConfig } from '@/types/provider';
 import {
-  createId, createStartNode, defaultEventForTarget, type ActionDefinition, type AiInputBinding, type PageTarget, type RunResult,
-  type ScriptDefinition, type WorkflowEdge, type WorkflowNode, type WorkspaceState,
+  createId, createStartNode, defaultEventForTarget, DEFAULT_DOM_QUERY, type AiInputBinding, type PageTarget, type RunResult,
+  type RecordingResult, type ScriptDefinition, type StepResult, type WorkflowEdge, type WorkflowNode, type WorkspaceState,
 } from '@/types/workflow';
 import { EMPTY_WORKSPACE } from '@/shared/storage';
+import { ensureWorkflowKey, rotateWorkflowKey } from '@/shared/workflow-keys';
+import { createWorkflowId, exportWorkflow, importWorkflow } from '@/shared/workflow-file';
 import { WorkflowCanvas } from './WorkflowCanvas';
 import { NodeInspector } from './NodeInspector';
 import { ProviderSettings } from './ProviderSettings';
+import { McpSettings } from './McpSettings';
+import { RunInputs } from './RunInputs';
 import './styles.css';
 
-type Mode = 'run' | 'compose';
-type SelectPurpose = { kind: 'node'; source?: { nodeId: string; port: WorkflowEdge['sourcePort'] } } | { kind: 'ai-input'; nodeId: string };
-type EditingDefinition = { type: 'action' | 'script'; id: string; name: string };
-type CreatableNodeKind = 'dom' | 'ai' | 'loop' | 'wait';
+type Mode = 'library' | 'editor';
+type SelectPurpose = { kind: 'node'; source?: { nodeId: string; port: WorkflowEdge['sourcePort'] } } | { kind: 'ai-input' | 'query-scope'; nodeId: string };
+type EditingDefinition = { type: 'script'; id: string; name: string };
+type CreatableNodeKind = 'dom' | 'query' | 'calendar' | 'ai' | 'loop' | 'wait';
 type PortMenu = { nodeId: string; port: WorkflowEdge['sourcePort']; x: number; y: number };
 
 async function send<T = RuntimeResponse>(message: RuntimeMessage): Promise<T> {
@@ -27,11 +30,25 @@ function RunReport({ result }: { result: RunResult }) {
   return <div className={`run-report ${result.ok ? 'success' : 'failed'}`}><strong>{result.ok ? '流程执行完成' : '流程执行失败'}</strong><span>{result.steps.filter((step) => step.ok).length}/{result.steps.length} 步成功</span>{result.error && <p>{result.error}</p>}<ul className="run-steps">{result.steps.map((step, index) => <li key={`${step.nodeId}_${index}`} className={step.ok ? 'ok' : 'bad'}><i>{step.ok ? '✓' : '!'}</i><span>{step.message}</span><small>{step.outputPort === 'failure' ? '失败出口' : step.outputPort === 'success' ? '成功出口' : step.outputPort}</small></li>)}</ul></div>;
 }
 
-function RunView({ state, onRun, running, lastRun }: { state: WorkspaceState; onRun: (script: ScriptDefinition) => void; running: string | null; lastRun: RunResult | null }) {
+interface WorkflowListProps {
+  state: WorkspaceState;
+  onRun: (workflow: ScriptDefinition) => void;
+  onCreate: () => void;
+  onEdit: (workflow: ScriptDefinition) => void;
+  onImport: () => void;
+  onExport: (workflow: ScriptDefinition) => void;
+  onCopyKey: (workflow: ScriptDefinition) => void;
+  running: string | null;
+  busy: boolean;
+  lastRun: RunResult | null;
+}
+
+function WorkflowList({ state, onRun, onCreate, onEdit, onImport, onExport, onCopyKey, running, busy, lastRun }: WorkflowListProps) {
   return <section className="run-view">
-    <div className="section-title"><div><h2>执行脚本</h2><p>直接运行已验证流程，不再抓取整页 DOM</p></div><span>{state.scripts.length} 个</span></div>
-    {!state.scripts.length && <div className="empty"><div className="empty-icon">▷</div><strong>还没有 Script</strong><p>进入编排模式，在画布中连通流程后保存为 Script。</p></div>}
-    <div className="script-list">{state.scripts.map((script) => <article className="script-card" key={script.id}><div><strong>{script.name}</strong><p>{script.description || `${script.nodes.length} 个节点 · ${script.edges.length} 条连线`}</p></div><button className="primary compact" disabled={Boolean(running)} onClick={() => onRun(script)}>{running === script.id ? '执行中…' : '运行'}</button></article>)}</div>
+    <div className="section-title workflow-title"><div><h2>工作流</h2><p>录制、编辑并安全地交给 MCP 调用</p></div><span>{state.scripts.length} 个</span></div>
+    <div className="workflow-actions"><button className="primary" disabled={busy} onClick={onCreate}>＋ 创建工作流</button><button className="secondary" disabled={busy} onClick={onImport}>导入 JSON</button></div>
+    {!state.scripts.length && <div className="empty"><div className="empty-icon">▷</div><strong>还没有工作流</strong><p>点击“创建工作流”，选择录制网页操作或手动画布编辑。</p></div>}
+    <div className="script-list">{state.scripts.map((workflow) => <article className="script-card" key={workflow.id}><div className="workflow-card-main"><strong>{workflow.name}</strong><p>{workflow.description || `${workflow.nodes.length} 个节点 · ${workflow.edges.length} 条连线`}</p><code title={workflow.id}>ID · {workflow.id}</code></div><div className="workflow-card-actions"><button className="secondary compact" disabled={busy} onClick={() => onEdit(workflow)}>编辑</button><button className="primary compact" disabled={busy} onClick={() => onRun(workflow)}>{running === workflow.id ? '执行中…' : '运行'}</button><button className="secondary compact" onClick={() => onCopyKey(workflow)}>复制密钥</button><button className="secondary compact" onClick={() => onExport(workflow)}>导出</button></div></article>)}</div>
     {lastRun && <RunReport result={lastRun} />}
   </section>;
 }
@@ -44,43 +61,128 @@ function uniqueName(nodes: WorkflowNode[], seed: string): string {
   return name;
 }
 
-function App() {
-  const [mode, setMode] = useState<Mode>('run');
-  const [state, setState] = useState<WorkspaceState>(() => ({ ...EMPTY_WORKSPACE, draft: [createStartNode()] }));
+// Edge IDs are regenerated by the canvas; they do not represent user edits.
+function graphSignature(nodes: WorkflowNode[], edges: WorkflowEdge[]): string {
+  return JSON.stringify({
+    nodes: [...nodes].sort((a, b) => a.id.localeCompare(b.id)),
+    edges: edges.map(({ sourceNodeId, targetNodeId, sourcePort }) => ({ sourceNodeId, targetNodeId, sourcePort }))
+      .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
+  });
+}
+
+export function App() {
+  const pluginVersion = chrome.runtime.getManifest?.().version;
+  const [mode, setMode] = useState<Mode>('library');
+  const [state, setState] = useState<WorkspaceState>(() => ({ ...EMPTY_WORKSPACE }));
+  const [ready, setReady] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const [selectPurpose, setSelectPurpose] = useState<SelectPurpose | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editing, setEditing] = useState<EditingDefinition | null>(null);
-  const [showLibrary, setShowLibrary] = useState(false);
+  const [showCreate, setShowCreate] = useState(false);
+  const [savedSignature, setSavedSignature] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [recordingBusy, setRecordingBusy] = useState(false);
   const [running, setRunning] = useState<string | null>(null);
+  const [pendingRun, setPendingRun] = useState<{ nodes: WorkflowNode[]; edges: WorkflowEdge[]; id: string } | null>(null);
   const [lastRun, setLastRun] = useState<RunResult | null>(null);
+  const [showRunReport, setShowRunReport] = useState(false);
+  const [activeRunNode, setActiveRunNode] = useState<string | null>(null);
+  const [nodeLogs, setNodeLogs] = useState<Record<string, StepResult[]>>({});
+  const [logNodeId, setLogNodeId] = useState<string | null>(null);
+  const activeRunId = useRef<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [bridgeConnected, setBridgeConnected] = useState(false);
+  const [instanceId, setInstanceId] = useState('');
   const [providerConfigured, setProviderConfigured] = useState(false);
   const [showProvider, setShowProvider] = useState(false);
+  const [showMcp, setShowMcp] = useState(false);
   const [portMenu, setPortMenu] = useState<PortMenu | null>(null);
+  const [recording, setRecording] = useState(false);
+  const [recordCount, setRecordCount] = useState(0);
+  const importInput = useRef<HTMLInputElement>(null);
+  const creationPanel = useRef<HTMLElement>(null);
+  const dirty = mode === 'editor' && (!editing || graphSignature(state.draft, state.draftEdges) !== savedSignature);
   const notify = useCallback((message: string) => {
     setToast(message);
     window.setTimeout(() => setToast(null), 3000);
   }, []);
 
   useEffect(() => {
+    setNodeLogs({}); setLogNodeId(null); setActiveRunNode(null);
+    setShowRunReport(false);
+  }, [mode, editing?.id]);
+
+  const loadRecording = useCallback((result: RecordingResult) => {
+    setState((current) => ({ ...current, draft: result.nodes, draftEdges: result.edges }));
+    setEditing(null);
+    setShowCreate(false);
+    setPortMenu(null);
+    setSelectPurpose(null);
+    setSelectedId(result.nodes[0]?.id ?? null);
+    setRecording(false);
+    setRecordCount(result.eventCount);
+    setMode('editor');
+    void send({ type: 'PAGE_AGENT_ACK_RECORDING' });
+    notify(result.eventCount > 0
+      ? `录制完成，已生成 ${result.eventCount} 个可编辑节点`
+      : '没有收到网页操作，请确认网页中出现录制悬浮条后重新录制');
+  }, [notify]);
+
+  useEffect(() => {
     void Promise.all([
       send<RuntimeResponse>({ type: 'PAGE_AGENT_GET_STATE' }),
       send<RuntimeResponse>({ type: 'PAGE_AGENT_GET_PROVIDER' }),
-    ]).then(([workspace, provider]) => {
+      send<RuntimeResponse>({ type: 'PAGE_AGENT_GET_RECORDING' }),
+      send<RuntimeResponse>({ type: 'PAGE_AGENT_GET_INSTANCE' }),
+    ]).then(([workspace, provider, recordState, instance]) => {
+      if (!workspace.ok || !workspace.state) throw new Error(workspace.error ?? '无法读取工作流列表');
+      const identity = instance.result as { instanceId: string; connected: boolean } | undefined;
+      if (identity) { setInstanceId(identity.instanceId); setBridgeConnected(identity.connected); }
       if (workspace.state) setState((current) => ({ ...current, actions: workspace.state!.actions, scripts: workspace.state!.scripts }));
       if (provider.result) setProviderConfigured((provider.result as AiProviderConfig).configured);
-    });
-  }, []);
+      const status = recordState.result as { active?: boolean; eventCount?: number; recording?: RecordingResult } | undefined;
+      setRecording(Boolean(status?.active));
+      setRecordCount(status?.eventCount ?? 0);
+      if (status?.recording) loadRecording(status.recording);
+      setReady(true);
+    }).catch(() => { setLoadError(true); notify('加载工作流失败，请重新打开插件'); });
+  }, [loadRecording, notify]);
 
   useEffect(() => {
     const listener = (message: RuntimeMessage) => {
+      if (message.type === 'PAGE_AGENT_RUN_PROGRESS') {
+        if (message.runId !== activeRunId.current) return;
+        if (message.phase === 'running') setActiveRunNode(message.nodeId);
+        else {
+          setActiveRunNode((current) => current === message.nodeId ? null : current);
+          setNodeLogs((current) => {
+            const next = { ...current };
+            for (const step of message.steps ?? []) next[step.nodeId] = [...(next[step.nodeId] ?? []), step];
+            return next;
+          });
+        }
+        return;
+      }
       if (message.type === 'PAGE_AGENT_BRIDGE_STATUS') setBridgeConnected(message.connected);
-      if (message.type !== 'PAGE_AGENT_SELECTION') return;
+      if (message.type === 'PAGE_AGENT_RECORDING_STATUS') {
+        setRecording(message.active);
+        setRecordCount(message.eventCount);
+        return;
+      }
+      if (message.type === 'PAGE_AGENT_RECORDING_COMPLETE') {
+        loadRecording(message.recording);
+        return;
+      }
+      if (message.type !== 'PAGE_AGENT_SELECTION' || mode !== 'editor' || !selectPurpose) return;
       const target = message.target;
       const name = uniqueName(state.draft, target.label || target.tagName);
       const namedTarget: PageTarget = { ...target, name };
-      if (selectPurpose?.kind === 'ai-input') {
+      if (selectPurpose?.kind === 'query-scope') {
+        setState((current) => ({ ...current, draft: current.draft.map((node) => node.id === selectPurpose.nodeId && (node.kind === 'query' || node.kind === 'calendar') ? { ...node, target: { ...target, name: node.name } } : node) }));
+        setSelectedId(selectPurpose.nodeId);
+        notify(`已选择 Query 检索范围：${target.label || target.tagName}`);
+      } else if (selectPurpose?.kind === 'ai-input') {
         const input: AiInputBinding = { id: createId('input'), name, type: 'selector', target: namedTarget, attribute: 'text' };
         setState((current) => ({ ...current, draft: current.draft.map((node) => node.id === selectPurpose.nodeId && node.kind === 'ai' ? { ...node, inputs: [...node.inputs, input] } : node) }));
         setSelectedId(selectPurpose.nodeId);
@@ -113,7 +215,7 @@ function App() {
     };
     chrome.runtime.onMessage.addListener(listener);
     return () => chrome.runtime.onMessage.removeListener(listener);
-  }, [notify, selectPurpose, state.draft]);
+  }, [loadRecording, mode, notify, selectPurpose, state.draft]);
 
   useEffect(() => {
     if (!portMenu) return;
@@ -124,13 +226,31 @@ function App() {
     return () => window.removeEventListener('keydown', closeOnEscape);
   }, [portMenu]);
 
+  useEffect(() => {
+    if (!showCreate) return;
+    const previousFocus = document.activeElement as HTMLElement | null;
+    creationPanel.current?.querySelector<HTMLButtonElement>('.creation-choice')?.focus();
+    const close = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !recordingBusy) setShowCreate(false);
+      if (event.key !== 'Tab') return;
+      const buttons = Array.from(creationPanel.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? []);
+      if (!buttons.length) { event.preventDefault(); return; }
+      const first = buttons[0];
+      const last = buttons[buttons.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    };
+    window.addEventListener('keydown', close);
+    return () => { window.removeEventListener('keydown', close); previousFocus?.focus(); };
+  }, [showCreate, recordingBusy]);
+
   const startSelector = async (purpose: SelectPurpose) => {
     if (selectPurpose) {
       await send({ type: 'PAGE_AGENT_STOP_SELECT' });
       setSelectPurpose(null);
       return;
     }
-    const response = await send<RuntimeResponse>({ type: 'PAGE_AGENT_START_SELECT' });
+    const response = await send<RuntimeResponse>({ type: 'PAGE_AGENT_START_SELECT', exactElement: purpose.kind === 'query-scope' });
     if (!response.ok) return notify(response.error ?? '无法启动 Selector');
     setSelectPurpose(purpose);
   };
@@ -157,9 +277,11 @@ function App() {
       const position = sourceNode
         ? { x: (sourceNode.position?.x ?? 80) + 300, y: (sourceNode.position?.y ?? 80) + offsetY }
         : { x: 80 + (current.draft.length % 3) * 280, y: 80 + Math.floor(current.draft.length / 3) * 180 };
-      const name = uniqueName(current.draft, { ai: 'AI节点', wait: '等待', loop: '循环' }[kind]);
+      const name = uniqueName(current.draft, { ai: 'AI节点', query: 'Query', calendar: '日历选择器', wait: '等待', loop: '循环' }[kind]);
       let node: WorkflowNode;
       if (kind === 'ai') node = { id, kind, name, instruction: '', inputs: [], event: { type: 'click' }, position };
+      else if (kind === 'query') node = { id, kind, name, target: { name, selector: '', frameId: 0, tagName: '', label: '' }, query: { ...DEFAULT_DOM_QUERY }, position };
+      else if (kind === 'calendar') node = { id, kind, name, target: { name, selector: '', frameId: 0, tagName: '', label: '' }, date: '', endDate: '', mode: 'single', position };
       else if (kind === 'loop') node = { id, kind, name, items: '', itemVariable: 'item', indexVariable: 'index', maxIterations: 100, position };
       else node = { id, kind, name, durationMs: 500, position };
       const edge = source && sourceNode
@@ -189,89 +311,205 @@ function App() {
     setSelectedId(null);
   };
 
-  const runGraph = async (nodes = state.draft, edges = state.draftEdges, id = 'draft') => {
+  const runGraph = async (nodes = state.draft, edges = state.draftEdges, id = 'draft', variables?: Record<string, unknown>) => {
+    if (running || saving) return;
     if (!nodes.length) return notify('画布中还没有节点');
+    if (variables === undefined && nodes.some((node) => node.kind === 'start' && node.inputs?.length)) {
+      setPendingRun({ nodes: structuredClone(nodes), edges: structuredClone(edges), id });
+      return;
+    }
     setRunning(id); setLastRun(null);
-    const response = await send<RuntimeResponse>({ type: 'PAGE_AGENT_RUN_GRAPH', nodes, edges });
-    const result = response.result as RunResult;
-    setRunning(null); setLastRun(result);
-    notify(result.ok ? '流程运行成功' : result.error || '流程运行失败');
+    const runId = createId('run');
+    activeRunId.current = runId;
+    setActiveRunNode(null); setNodeLogs({}); setLogNodeId(null);
+    setShowRunReport(false);
+    try {
+      const response = await send<RuntimeResponse>({ type: 'PAGE_AGENT_RUN_GRAPH', nodes, edges, runId, ...(variables !== undefined ? { variables } : {}) });
+      const result = response.result as RunResult | undefined;
+      if (!result) throw new Error(response.error ?? '未收到流程运行结果');
+      setLastRun(result);
+      const logs: Record<string, StepResult[]> = {};
+      for (const step of result.steps) logs[step.nodeId] = [...(logs[step.nodeId] ?? []), step];
+      setNodeLogs(logs);
+      notify(result.ok ? '流程运行成功' : result.error || '流程运行失败');
+    } catch (error) { notify(`运行失败：${(error as Error).message}`); }
+    finally { activeRunId.current = null; setActiveRunNode(null); setRunning(null); }
   };
   const runScript = async (script: ScriptDefinition) => {
+    if (running || saving) return;
     setRunning(script.id); setLastRun(null);
-    const response = await send<RuntimeResponse>({ type: 'PAGE_AGENT_RUN_SCRIPT', scriptId: script.id });
-    const result = response.result as RunResult;
-    setRunning(null); setLastRun(result); notify(result.ok ? `${script.name} 执行完成` : result.error || '执行失败');
+    try {
+      const response = await send<RuntimeResponse>({ type: 'PAGE_AGENT_RUN_SCRIPT', scriptId: script.id });
+      const result = response.result as RunResult | undefined;
+      if (!result) throw new Error(response.error ?? '未收到流程运行结果');
+      setLastRun(result);
+      notify(result.ok ? `${script.name} 执行完成` : result.error || '执行失败');
+    } catch (error) { notify(`运行失败：${(error as Error).message}`); }
+    finally { setRunning(null); }
   };
-  const persistLibrary = (next: WorkspaceState) => {
-    setState(next);
-    void send<RuntimeResponse>({ type: 'PAGE_AGENT_SET_STATE', state: { ...next, draft: [], draftEdges: [] } })
-      .then((response) => { if (!response.ok) notify(response.error ?? '保存失败'); });
+  const persistLibrary = async (next: WorkspaceState) => {
+    const response = await send<RuntimeResponse>({ type: 'PAGE_AGENT_SET_STATE', state: { ...next, draft: [], draftEdges: [] } });
+    if (!response.ok) throw new Error(response.error ?? '保存失败');
+    setState((current) => ({ ...current, actions: next.actions, scripts: next.scripts }));
   };
   const newDraft = () => {
-    if (selectPurpose) void send({ type: 'PAGE_AGENT_STOP_SELECT' });
-    setState((current) => ({ ...current, draft: [createStartNode()], draftEdges: [] }));
+    const start = createStartNode();
+    setState((current) => ({ ...current, draft: [start], draftEdges: [] }));
+    setSelectPurpose(null);
+    setPortMenu(null);
+    setSelectedId(start.id);
+    setEditing(null);
+    setLastRun(null);
+    setShowCreate(false);
+    setMode('editor');
+    notify('已新建流程，未保存内容不会持久化');
+  };
+  const backToLibrary = async () => {
+    if (running || saving) return;
+    if (dirty && !window.confirm('当前工作流有未保存的内容。返回列表将丢弃这些修改，确定返回吗？')) return;
+    if (selectPurpose) {
+      try {
+        const response = await send<RuntimeResponse>({ type: 'PAGE_AGENT_STOP_SELECT' });
+        if (!response.ok) return notify(response.error ?? '无法退出元素选择，请重试');
+      } catch { return notify('无法退出元素选择，请重试'); }
+    }
     setSelectPurpose(null);
     setPortMenu(null);
     setSelectedId(null);
     setEditing(null);
     setLastRun(null);
-    notify('已新建流程，未保存内容不会持久化');
+    setState((current) => ({ ...current, draft: [], draftEdges: [] }));
+    setMode('library');
   };
-  const openDefinition = (definition: ActionDefinition | ScriptDefinition, type: EditingDefinition['type']) => {
+  const openDefinition = (definition: ScriptDefinition, type: EditingDefinition['type']) => {
     setState((current) => ({ ...current, draft: structuredClone(definition.nodes), draftEdges: structuredClone(definition.edges) }));
     setEditing({ type, id: definition.id, name: definition.name });
+    setSavedSignature(graphSignature(definition.nodes, definition.edges));
     setSelectedId(null);
     setLastRun(null);
-    setShowLibrary(false);
-    setMode('compose');
-    notify(`已打开${type === 'action' ? ' Action' : ' Script'}：${definition.name}`);
+    setMode('editor');
+    notify(`已打开工作流：${definition.name}`);
   };
-  const saveDefinition = (type: 'action' | 'script') => {
+  const saveDefinition = async (type: 'script') => {
+    if (saving || running) return;
     if (!state.draft.length) return notify('画布中还没有节点');
-    const label = type === 'action' ? 'Action' : 'Script';
+    const label = '工作流';
     const now = Date.now();
-    if (editing?.type === type) {
-      const next = type === 'action'
-        ? { ...state, actions: state.actions.map((item) => item.id === editing.id ? { ...item, nodes: structuredClone(state.draft), edges: structuredClone(state.draftEdges), updatedAt: now } : item) }
-        : { ...state, scripts: state.scripts.map((item) => item.id === editing.id ? { ...item, nodes: structuredClone(state.draft), edges: structuredClone(state.draftEdges), updatedAt: now } : item) };
-      persistLibrary(next);
-      notify(`已更新 ${label}：${editing.name}`);
-      return;
-    }
-    const name = window.prompt(`${label} 名称`, `新 ${label}`)?.trim();
+    const updating = editing?.type === type;
+    const name = updating ? editing.name : window.prompt(`${label} 名称`, `新 ${label}`)?.trim();
     if (!name) return;
-    if (type === 'action') {
-      const action: ActionDefinition = { id: createId('action'), name, nodes: structuredClone(state.draft), edges: structuredClone(state.draftEdges), createdAt: now, updatedAt: now };
-      persistLibrary({ ...state, actions: [...state.actions, action] });
-      setEditing({ type, id: action.id, name });
-    } else {
-      const script: ScriptDefinition = { id: createId('script'), name, nodes: structuredClone(state.draft), edges: structuredClone(state.draftEdges), createdAt: now, updatedAt: now };
-      persistLibrary({ ...state, scripts: [...state.scripts, script] });
-      setEditing({ type, id: script.id, name });
+    const id = updating ? editing.id : createWorkflowId();
+    const nodes = structuredClone(state.draft);
+    const edges = structuredClone(state.draftEdges);
+    setSaving(true);
+    try {
+      if (type === 'script') await ensureWorkflowKey(id);
+      if (!updating) {
+        const draftKey = `pageAgentRunInputs:draft:${nodes.find((node) => node.kind === 'start')?.id ?? 'draft'}`;
+        const history = await chrome.storage.local.get(draftKey);
+        if (history[draftKey]) await chrome.storage.local.set({ [`pageAgentRunInputs:${id}`]: history[draftKey] });
+      }
+      const definition = { id, name, nodes, edges, createdAt: now, updatedAt: now };
+      const next = { ...state, scripts: updating ? state.scripts.map((item) => item.id === id ? { ...item, nodes, edges, updatedAt: now } : item) : [...state.scripts, definition] };
+      await persistLibrary(next);
+      {
+        setEditing({ type, id, name });
+        setSavedSignature(graphSignature(nodes, edges));
+      }
+      notify(`已${updating ? '更新' : '保存'} ${label}：${name}`);
+    } catch (error) {
+      notify(`保存失败：${(error as Error).message}`);
+    } finally {
+      setSaving(false);
     }
-    notify(`已保存 ${label}：${name}`);
+  };
+
+  const toggleRecording = async () => {
+    if (recordingBusy || running) return;
+    setRecordingBusy(true);
+    try {
+      const response = await send<RuntimeResponse>({ type: recording ? 'PAGE_AGENT_STOP_RECORDING' : 'PAGE_AGENT_START_RECORDING' });
+      if (!response.ok) return notify(response.error ?? (recording ? '停止录制失败' : '启动录制失败'));
+      if (!recording) {
+        setShowCreate(false);
+        setRecording(true);
+        setRecordCount(0);
+        notify('录制已开始，请在网页中完成操作');
+      }
+    } catch (error) {
+      notify(`录制失败：${(error as Error).message}`);
+    } finally {
+      setRecordingBusy(false);
+    }
+  };
+
+  const copyWorkflowKey = async (workflow: ScriptDefinition) => {
+    try {
+      const key = await ensureWorkflowKey(workflow.id);
+      await navigator.clipboard.writeText(key);
+      notify('工作流密钥已复制；请像密码一样妥善保存');
+    } catch (error) {
+      notify(`复制密钥失败：${(error as Error).message}`);
+    }
+  };
+
+  const downloadWorkflow = (workflow: ScriptDefinition) => {
+    const json = JSON.stringify(exportWorkflow(workflow), null, 2);
+    const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `${workflow.name.replace(/[^\p{L}\p{N}_-]+/gu, '_') || 'workflow'}.page-agent.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    notify('工作流已导出；安全密钥不会写入文件');
+  };
+
+  const readWorkflowFile = async (file: File) => {
+    if (running || saving || recording || mode !== 'library') return;
+    setSaving(true);
+    try {
+      if (file.size > 5 * 1024 * 1024) throw new Error('工作流文件不能超过 5 MB');
+      const parsed = JSON.parse(await file.text()) as unknown;
+      const { workflow, idChanged } = importWorkflow(parsed, state.scripts.map((item) => item.id));
+      const next = { ...state, scripts: [...state.scripts, workflow], draft: workflow.nodes, draftEdges: workflow.edges };
+      await rotateWorkflowKey(workflow.id);
+      await persistLibrary(next);
+      setState((current) => ({ ...current, draft: workflow.nodes, draftEdges: workflow.edges }));
+      setEditing({ type: 'script', id: workflow.id, name: workflow.name });
+      setSavedSignature(graphSignature(workflow.nodes, workflow.edges));
+      setSelectedId(null);
+      setLastRun(null);
+      setMode('editor');
+      notify(idChanged ? '导入成功；检测到 ID 冲突，已分配新的全局 ID 和密钥' : '工作流导入成功，已生成本机访问密钥');
+    } catch (error) {
+      notify(`导入失败：${(error as Error).message}`);
+    } finally {
+      setSaving(false);
+      if (importInput.current) importInput.current.value = '';
+    }
   };
 
   const selectedNode = state.draft.find((node) => node.id === selectedId);
-  return <div className="app">
-    <header className="app-head"><div className="brand"><span className="logo">P</span><div><strong>Page Agent</strong><small>网页能力编排器</small></div></div><div className="head-actions"><button className={`provider-chip ${providerConfigured ? 'online' : ''}`} onClick={() => setShowProvider(true)}><i />{providerConfigured ? 'AI 已配置' : '配置 AI'}</button><div className={`bridge ${bridgeConnected ? 'online' : ''}`}><i />MCP</div></div></header>
-    <nav className="mode-tabs"><button className={mode === 'run' ? 'active' : ''} onClick={() => { setMode('run'); setPortMenu(null); }}>执行模式</button><button className={mode === 'compose' ? 'active' : ''} onClick={() => setMode('compose')}>画布编排</button></nav>
-    <main className={mode === 'compose' ? 'compose-main' : ''}>
-      {mode === 'run' ? <RunView state={state} onRun={runScript} running={running} lastRun={lastRun} /> : <section className="compose-view">
-        <div className="compose-document-bar"><div><strong>{editing?.name ?? '未命名流程'}</strong><span>{editing ? `正在编辑 ${editing.type === 'action' ? 'Action' : 'Script'}` : '新建 · 尚未保存'}</span></div><div><button className="secondary compact" onClick={newDraft}>新建</button><button className="secondary compact" onClick={() => setShowLibrary(true)}>打开</button></div></div>
-        <div className="canvas-toolbar"><button className={`tool select-tool ${selectPurpose?.kind === 'node' ? 'active' : ''}`} onClick={() => void startSelector({ kind: 'node' })}><span>⌖</span>{selectPurpose ? '退出选择' : 'Selector'}</button><button className="tool" onClick={() => addNode('ai')}><span>✦</span>AI</button><button className="tool" onClick={() => addNode('loop')}><span>↻</span>循环</button><button className="tool" onClick={() => addNode('wait')}><span>◷</span>等待</button></div>
+  return <div className={`app${mode === 'editor' ? ' is-editing' : ''}`}>
+    <header className="app-head"><div className="brand"><span className="logo">P</span><div><strong>Page Agent</strong><small>网页能力编排器{pluginVersion && ` · v${pluginVersion}`}</small></div></div><div className="head-actions"><button className={`provider-chip ${providerConfigured ? 'online' : ''}`} onClick={() => setShowProvider(true)}><i />{providerConfigured ? 'AI 已配置' : '配置 AI'}</button><button className={`bridge ${bridgeConnected ? 'online' : ''}`} title="查看 MCP 连接配置" aria-label="MCP 连接配置" onClick={() => setShowMcp(true)}><i />MCP</button></div></header>
+    <main className={mode === 'editor' ? 'compose-main' : ''}>
+      {!ready ? <div className="empty" role="status"><strong>{loadError ? '工作流列表加载失败' : '正在加载工作流…'}</strong>{loadError && <button className="secondary" onClick={() => window.location.reload()}>重新加载</button>}</div> : mode === 'library' ? recording ? <section className="recording-view"><div className="recording-indicator"><i />录制中</div><h2>请在网页中操作</h2><p>点击、输入、滚动等操作会按顺序记录。停止后自动生成可编辑的工作流。</p><strong>已记录 {recordCount} 个操作</strong><button className="record-button active" disabled={recordingBusy} onClick={() => void toggleRecording()}>{recordingBusy ? '正在停止…' : '停止录制并编辑'}</button><small>也可以使用网页中的悬浮停止按钮。</small></section> : <WorkflowList state={state} onRun={runScript} onCreate={() => setShowCreate(true)} onEdit={(workflow) => openDefinition(workflow, 'script')} onImport={() => importInput.current?.click()} onExport={downloadWorkflow} onCopyKey={(workflow) => void copyWorkflowKey(workflow)} running={running} busy={Boolean(running) || saving} lastRun={lastRun} /> : <section className="compose-view" aria-label="工作流编辑器">
+        <div className="compose-document-bar"><button className="secondary compact" disabled={Boolean(running) || saving} onClick={() => void backToLibrary()}>‹ 返回列表</button><div className="document-title"><strong>{editing?.name ?? '未命名工作流'}</strong><span>{saving ? '正在保存…' : dirty ? '尚未保存' : '已保存'}</span></div></div>
+        <div className="canvas-toolbar"><button className={`tool select-tool ${selectPurpose?.kind === 'node' ? 'active' : ''}`} onClick={() => void startSelector({ kind: 'node' })}><span>⌖</span>{selectPurpose ? '退出选择' : 'Selector'}</button><button className="tool" onClick={() => addNode('query')}><span>⌕</span>Query</button><button className="tool" onClick={() => addNode('calendar')}><span>▦</span>日历</button><button className="tool" onClick={() => addNode('ai')}><span>✦</span>AI</button><button className="tool" onClick={() => addNode('loop')}><span>↻</span>循环</button><button className="tool" onClick={() => addNode('wait')}><span>◷</span>等待</button></div>
         {selectPurpose && <div className="select-hint"><strong>Selector 已开启</strong><span>{selectPurpose.kind === 'ai-input' ? '在网页中选择一个元素作为 AI 输入。' : '页面事件已暂停；点击元素创建具名网页节点。'}</span></div>}
-        <div className={`canvas-layout${selectedNode ? ' has-selection' : ''}`}><WorkflowCanvas nodes={state.draft} edges={state.draftEdges} onChange={updateGraph} onSelect={setSelectedId} onAddFromPort={addFromPort} /><NodeInspector node={selectedNode} nodes={state.draft} actions={state.actions} onChange={updateNode} onDelete={deleteNode} onRun={() => selectedNode && void runGraph([selectedNode], [], selectedNode.id)} onClose={() => setSelectedId(null)} onPickAiSelector={() => selectedNode && void startSelector({ kind: 'ai-input', nodeId: selectedNode.id })} notify={notify} /></div>
-        {lastRun && <RunReport result={lastRun} />}
+        <div className={`canvas-layout${selectedNode ? ' has-selection' : ''}`}><WorkflowCanvas nodes={state.draft} edges={state.draftEdges} onChange={updateGraph} onSelect={setSelectedId} onAddFromPort={addFromPort} activeNodeId={activeRunNode} nodeLogs={nodeLogs} onShowLogs={setLogNodeId} /><NodeInspector node={selectedNode} nodes={state.draft} actions={state.actions} onChange={updateNode} onDelete={deleteNode} onRun={() => selectedNode && void runGraph([selectedNode], [], selectedNode.id)} onClose={() => setSelectedId(null)} onPickAiSelector={() => selectedNode && void startSelector({ kind: 'ai-input', nodeId: selectedNode.id })} onPickQueryScope={() => selectedNode && void startSelector({ kind: 'query-scope', nodeId: selectedNode.id })} lastRun={lastRun} notify={notify} /></div>
+        {lastRun && !running && <button className={`canvas-run-summary ${lastRun.ok ? 'success' : 'failed'}`} onClick={() => setShowRunReport(true)} aria-label="查看本次运行结果">{lastRun.ok ? '✓ 运行完成' : '! 运行失败'} · 查看详情</button>}
       </section>}
     </main>
-    {mode === 'compose' && <footer className="compose-footer"><button className="secondary" onClick={() => saveDefinition('action')}>{editing?.type === 'action' ? '更新 Action' : '保存 Action'}</button><button className="secondary" onClick={() => saveDefinition('script')}>{editing?.type === 'script' ? '更新 Script' : '保存 Script'}</button><button className="primary" disabled={Boolean(running) || !state.draft.length} onClick={() => void runGraph()}>{running === 'draft' ? '运行中…' : '▶ 运行画布'}</button></footer>}
-    {showLibrary && <div className="library-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowLibrary(false); }}><section className="library-panel"><div className="library-head"><div><strong>打开已保存流程</strong><span>选择后才会载入编辑画布</span></div><button className="icon-btn" onClick={() => setShowLibrary(false)}>×</button></div><div className="library-group"><strong>Scripts</strong>{state.scripts.length ? state.scripts.map((script) => <button key={script.id} onClick={() => openDefinition(script, 'script')}><span>{script.name}</span><small>{script.nodes.length} 个节点</small></button>) : <p>暂无 Script</p>}</div><div className="library-group"><strong>Actions</strong>{state.actions.length ? state.actions.map((action) => <button key={action.id} onClick={() => openDefinition(action, 'action')}><span>{action.name}</span><small>{action.nodes.length} 个节点</small></button>) : <p>暂无 Action</p>}</div></section></div>}
+    {ready && mode === 'editor' && <footer className="compose-footer"><button className="primary" disabled={saving || Boolean(running)} onClick={() => void saveDefinition('script')}>{editing?.type === 'script' ? '更新工作流' : '保存工作流'}</button><button className="secondary" disabled={saving || Boolean(running) || !state.draft.length} onClick={() => void runGraph()}>{running ? '运行中…' : '▶ 运行画布'}</button></footer>}
+    {showCreate && mode === 'library' && !recording && <div className="settings-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget && !recordingBusy) setShowCreate(false); }}><section ref={creationPanel} className="settings-panel creation-panel" role="dialog" aria-modal="true" aria-labelledby="creation-title"><div className="creation-head"><div><h2 id="creation-title">创建工作流</h2><p>选择一种创建方式</p></div><button className="icon-btn" aria-label="关闭创建工作流" disabled={recordingBusy} onClick={() => setShowCreate(false)}>×</button></div><button className="creation-choice" disabled={recordingBusy} onClick={() => void toggleRecording()}><i className="record-symbol">●</i><span><strong>{recordingBusy ? '正在启动录制…' : '录制网页操作'}</strong><small>在当前网页操作，停止后生成可编辑的工作流</small></span><b>›</b></button><button className="creation-choice" disabled={recordingBusy} onClick={newDraft}><i>⌘</i><span><strong>手动画布编辑</strong><small>从开始节点搭建流程，配置网址和后续操作</small></span><b>›</b></button></section></div>}
     {showProvider && <ProviderSettings onClose={() => { setShowProvider(false); void send<RuntimeResponse>({ type: 'PAGE_AGENT_GET_PROVIDER' }).then((response) => setProviderConfigured(Boolean((response.result as AiProviderConfig | undefined)?.configured))); }} notify={notify} />}
-    {portMenu && <div className="node-picker-scrim" onMouseDown={(event) => { if (event.target === event.currentTarget) setPortMenu(null); }}><section className="node-picker" style={{ left: Math.max(8, Math.min(portMenu.x + 12, window.innerWidth - 196)), top: Math.max(8, Math.min(portMenu.y - 42, window.innerHeight - 166)) }}><div><strong>添加后续节点</strong><small>{portMenu.port === 'failure' ? '失败路径' : portMenu.port === 'body' ? '遍历路径' : portMenu.port === 'done' ? '完成路径' : '成功路径'}</small></div><div className="node-picker-grid"><button onClick={() => choosePortNode('dom')}><i>⌖</i><span>Selector</span></button><button onClick={() => choosePortNode('ai')}><i>✦</i><span>AI</span></button><button onClick={() => choosePortNode('loop')}><i>↻</i><span>循环</span></button><button onClick={() => choosePortNode('wait')}><i>◷</i><span>等待</span></button></div></section></div>}
+    {showMcp && <McpSettings instanceId={instanceId} connected={bridgeConnected} onClose={() => setShowMcp(false)} notify={notify} />}
+    {portMenu && <div className="node-picker-scrim" onMouseDown={(event) => { if (event.target === event.currentTarget) setPortMenu(null); }}><section className="node-picker" style={{ left: Math.max(8, Math.min(portMenu.x + 12, window.innerWidth - 196)), top: Math.max(8, Math.min(portMenu.y - 42, window.innerHeight - 220)) }}><div><strong>添加后续节点</strong><small>{portMenu.port === 'failure' ? '失败路径' : portMenu.port === 'body' ? '遍历路径' : portMenu.port === 'done' ? '完成路径' : '成功路径'}</small></div><div className="node-picker-grid"><button onClick={() => choosePortNode('dom')}><i>⌖</i><span>Selector</span></button><button onClick={() => choosePortNode('query')}><i>⌕</i><span>Query</span></button><button onClick={() => choosePortNode('calendar')}><i>▦</i><span>日历</span></button><button onClick={() => choosePortNode('ai')}><i>✦</i><span>AI</span></button><button onClick={() => choosePortNode('loop')}><i>↻</i><span>循环</span></button><button onClick={() => choosePortNode('wait')}><i>◷</i><span>等待</span></button></div></section></div>}
+    <input ref={importInput} className="hidden-file-input" type="file" accept="application/json,.json" onChange={(event) => { const file = event.target.files?.[0]; if (file) void readWorkflowFile(file); }} />
+    {pendingRun && <RunInputs historyKey={editing?.id ?? `draft:${pendingRun.nodes.find((node) => node.kind === 'start')?.id ?? pendingRun.id}`} inputs={pendingRun.nodes.flatMap((node) => node.kind === 'start' ? node.inputs ?? [] : [])} onCancel={() => setPendingRun(null)} onRun={(variables) => { const request = pendingRun; setPendingRun(null); void runGraph(request.nodes, request.edges, request.id, variables); }} />}
+    {logNodeId && <div className="settings-overlay"><section className="settings-panel node-log-detail" role="dialog" aria-modal="true" aria-label="节点运行日志"><h2>节点运行日志 · {state.draft.find((node) => node.id === logNodeId)?.name}</h2>{(nodeLogs[logNodeId] ?? []).map((step, index) => <article key={index} className={step.ok ? 'log-success' : 'log-failure'}><strong>{index + 1}. {step.ok ? '成功' : '失败'} · {step.message}</strong><pre>{JSON.stringify({ outputPort: step.outputPort, data: step.data, verification: step.verification }, null, 2)}</pre></article>)}<button className="secondary" onClick={() => setLogNodeId(null)}>关闭日志</button></section></div>}
+    {showRunReport && lastRun && mode === 'editor' && <div className="settings-overlay"><section className="settings-panel" role="dialog" aria-modal="true" aria-label="本次运行结果"><RunReport result={lastRun} /><button className="secondary" onClick={() => setShowRunReport(false)}>关闭运行结果</button></section></div>}
     {toast && <div className="toast">{toast}</div>}
   </div>;
 }
-
-createRoot(document.getElementById('root')!).render(<App />);

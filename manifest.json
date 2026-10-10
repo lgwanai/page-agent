@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Page Agent",
-  "version": "0.7.0",
-  "description": "把历史网页编排成可复用、可由 AI 调用的 Action 与 Script",
+  "version": "0.10.15",
+  "description": "录制、编排并通过 MCP 安全调用历史网页工作流",
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' http://* https://* ws://127.0.0.1:17373"
   },
@@ -16,7 +16,9 @@
       "matches": ["http://*/*", "https://*/*"],
       "js": ["src/content/index.ts"],
       "run_at": "document_start",
-      "all_frames": true
+      "all_frames": true,
+      "match_about_blank": true,
+      "match_origin_as_fallback": true
     }
   ]
 }

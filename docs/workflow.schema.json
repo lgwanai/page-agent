@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://page-agent.dev/schemas/workflow-v1.json",
+  "title": "Page Agent Workflow",
+  "type": "object",
+  "required": ["$schema", "schemaVersion", "kind", "exportedAt", "workflow"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "const": "https://page-agent.dev/schemas/workflow-v1.json" },
+    "schemaVersion": { "const": 1 },
+    "kind": { "const": "page-agent-workflow" },
+    "exportedAt": { "type": "string", "format": "date-time" },
+    "workflow": {
+      "type": "object",
+      "required": ["id", "name", "nodes", "edges", "createdAt", "updatedAt"],
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "name": { "type": "string", "minLength": 1 },
+        "description": { "type": "string" },
+        "urlPattern": { "type": "string" },
+        "createdAt": { "type": "number" },
+        "updatedAt": { "type": "number" },
+        "lastRunAt": { "type": "number" },
+        "nodes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["id", "kind", "name"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1 },
+              "kind": { "enum": ["start", "dom", "query", "calendar", "ai", "action", "wait", "loop"] },
+              "name": { "type": "string", "minLength": 1 },
+              "position": {
+                "type": "object",
+                "required": ["x", "y"],
+                "properties": { "x": { "type": "number" }, "y": { "type": "number" } }
+              }
+            },
+            "allOf": [{
+              "if": { "properties": { "kind": { "const": "query" } } },
+              "then": {
+                "required": ["target", "query"],
+                "properties": {
+                  "target": {
+                    "type": "object", "required": ["selector", "frameId"],
+                    "properties": { "selector": { "type": "string" }, "frameId": { "type": "integer", "minimum": 0 }, "frameUrl": { "type": "string" } }
+                  },
+                  "query": { "$ref": "#/$defs/domQuery" }
+                }
+              }
+            }],
+            "additionalProperties": true
+          }
+        },
+        "edges": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "sourceNodeId", "targetNodeId", "sourcePort"],
+            "properties": {
+              "id": { "type": "string" },
+              "sourceNodeId": { "type": "string" },
+              "targetNodeId": { "type": "string" },
+              "sourcePort": { "enum": ["success", "failure", "body", "done"] }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "$defs": {
+    "domQuery": {
+      "type": "object",
+      "required": ["candidateSelector", "includeRoot", "source", "attributeName", "match", "pattern", "regexFlags"],
+      "properties": {
+        "candidateSelector": { "type": "string" },
+        "includeRoot": { "type": "boolean" },
+        "source": { "enum": ["attribute", "value", "text"] },
+        "attributeName": { "type": "string" },
+        "match": { "enum": ["exists", "equals", "contains", "regex"] },
+        "pattern": { "type": "string" },
+        "regexFlags": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

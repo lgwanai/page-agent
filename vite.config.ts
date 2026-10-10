@@ -6,6 +6,14 @@ import manifest from './manifest.json';
 
 export default defineConfig({
   plugins: [react(), crx({ manifest })],
+  // The build process knows the local project and Node locations; Chrome cannot
+  // recover filesystem paths from an extension URL at runtime.
+  define: {
+    __PAGE_AGENT_LOCAL_MCP__: JSON.stringify({
+      command: process.execPath,
+      serverPath: fileURLToPath(new URL('./mcp-server/dist/index.js', import.meta.url)),
+    }),
+  },
   resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
   build: { outDir: 'dist', sourcemap: true },
   server: { port: 5173, strictPort: true, hmr: { port: 5174 } },

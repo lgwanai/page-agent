@@ -1,6 +1,6 @@
 {
   "name": "page-agent",
-  "version": "0.7.0",
+  "version": "0.10.15",
   "private": true,
   "description": "Turn legacy web pages into reusable, model-callable actions and scripts.",
   "type": "module",
@@ -14,9 +14,9 @@
   },
   "dependencies": {
     "@flowgram.ai/free-layout-editor": "^1.0.13",
-    "reflect-metadata": "^0.2.2",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "reflect-metadata": "^0.2.2"
   },
   "devDependencies": {
     "@crxjs/vite-plugin": "^2.0.0-beta.25",
@@ -28,6 +28,7 @@
     "@typescript-eslint/parser": "^7.13.0",
     "@vitejs/plugin-react": "^4.3.1",
     "eslint": "^8.57.0",
+    "jsdom": "^26.1.0",
     "typescript": "^5.4.5",
     "vite": "^5.2.0",
     "vitest": "^1.6.0"
