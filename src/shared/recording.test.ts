@@ -26,4 +26,11 @@ describe('recording graph', () => {
     expect(result.edges).toHaveLength(2);
     expect(result.edges.every((edge) => edge.sourcePort === 'success')).toBe(true);
   });
+  it('compacts native focus pairs only for the same frame/element and retains keyboard metadata', () => {
+    const pair = [event('focus'), event('focusin'), event('input', 'abc'), event('blur'), event('focusout'), { ...event('pressKey', 's'), event: { type: 'pressKey' as const, value: 's', code: 'KeyS', modifiers: { ctrl: true } } }];
+    expect(compactRecordedEvents(pair).map(item => item.event.type)).toEqual(['focusin','input','focusout','pressKey']);
+    const graph = recordingToGraph('https://example.com', 1, 2, pair);
+    expect(graph.nodes.at(-1)).toMatchObject({ kind: 'dom', event: { code: 'KeyS', modifiers: { ctrl: true } } });
+    expect(compactRecordedEvents([event('focus'), { ...event('focusin'), target: { ...event('focusin').target, frameId: 2 } }])).toHaveLength(2);
+  });
 });

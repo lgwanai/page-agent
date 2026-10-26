@@ -14,3 +14,8 @@ describe('plugin release version', () => {
     expect(lock.packages[''].version).toBe(project.version);
   });
 });
+
+it('derives the page script version from the same manifest without a second hardcoded version', async () => {
+  const { CONTENT_VERSION } = await import('./release');
+  expect(CONTENT_VERSION).toBe(`nodes-v${manifest.version}`);
+});

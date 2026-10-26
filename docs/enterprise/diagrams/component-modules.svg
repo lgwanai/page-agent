@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1270" viewBox="0 0 1600 1270" role="img" aria-labelledby="title desc">
+  <title id="title">Page Agent 组件模块与职责分层</title>
+  <desc id="desc">插件交互层通过 runtime 消息进入后台编排和运行模块。MCP 通过独立接入层进入后台。后台调用共享数据与安全基础模块，以及页面内容脚本。图中连线是层间依赖，不表示每个模块调用同层全部模块。</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#53677d"/></marker>
+    <style>
+      text{font-family:"PingFang SC","Microsoft YaHei","Noto Sans CJK SC",Arial,sans-serif;fill:#1c3046}.heading{font-size:32px;font-weight:600}.sub{font-size:16px;fill:#63758a}.zone{font-size:20px;font-weight:600}.name{font-size:21px;font-weight:600}.body{font-size:17px;fill:#52657b}.file{font-size:15px;fill:#657990;font-family:Arial,"PingFang SC",sans-serif}.label{font-size:15px;fill:#52657b}.card{fill:#fff;stroke:#c6d3e2;stroke-width:1.5}.flow{fill:none;stroke:#53677d;stroke-width:2;marker-end:url(#arrow)}
+    </style>
+  </defs>
+  <rect width="1600" height="1270" fill="#fff"/>
+  <rect x="40" y="38" width="5" height="64" rx="2" fill="#315e9b"/>
+  <text class="heading" x="65" y="65">Page Agent｜组件模块与职责分层</text>
+  <text class="sub" x="65" y="95">实现视图 · 编辑与执行解耦 · 页面能力可复用 · 存储与诊断独立</text>
+  <text class="file" x="1540" y="62" text-anchor="end">插件 0.10.18 / MCP 0.10.0</text>
+
+  <rect x="40" y="150" width="970" height="220" rx="14" fill="#edf3fc" stroke="#a9bfdc" stroke-width="1.5"/>
+  <text class="zone" x="65" y="185">01 交互与编排层｜Chrome Side Panel</text>
+  <rect class="card" x="70" y="210" width="280" height="130" rx="9"/>
+  <text class="name" x="90" y="242">工作流工作台</text><text class="body" x="90" y="273">列表 / 新建 / 导入导出 / 录制</text><text class="body" x="90" y="302">显式保存 / 运行与进度</text><text class="file" x="90" y="326">App.tsx</text>
+  <rect class="card" x="375" y="210" width="280" height="130" rx="9"/>
+  <text class="name" x="395" y="242">画布与节点属性</text><text class="body" x="395" y="273">FlowGram / 连线 / 布局</text><text class="body" x="395" y="302">节点配置 / 高亮 / 日志详情</text><text class="file" x="395" y="326">WorkflowCanvas · NodeInspector</text>
+  <rect class="card" x="680" y="210" width="300" height="130" rx="9"/>
+  <text class="name" x="700" y="242">运行输入与连接配置</text><text class="body" x="700" y="273">参数表单 / Provider / MCP</text><text class="body" x="700" y="302">手动历史与 MCP 参数隔离</text><text class="file" x="700" y="324">RunInputs · ProviderSettings</text><text class="file" x="700" y="343">McpSettings</text>
+
+  <rect x="1050" y="150" width="510" height="220" rx="14" fill="#f4f6fa" stroke="#c6d3e2" stroke-width="1.5"/>
+  <text class="zone" x="1075" y="185">独立接入层｜Node MCP</text>
+  <text class="name" x="1075" y="225">21 个工具 / SDK / Zod</text>
+  <text class="body" x="1075" y="258">发现 · 运行 · 编排 · 调试 · 页面读取 · 截图</text>
+  <text class="body" x="1075" y="291">SharedBridge → 共享 Broker → 实例路由</text>
+  <text class="file" x="1075" y="328">mcp-server/src/index.ts · shared-bridge.ts · bridge.ts</text>
+
+  <path class="flow" d="M515 370V430"/><text class="label" x="529" y="407">chrome.runtime 消息 / 状态通知</text>
+  <path class="flow" d="M1305 370V397H180V430"/>
+  <rect x="838" y="385" width="195" height="25" fill="#fff"/><text class="label" x="850" y="403">本机 WS / 指定 instanceId</text>
+
+  <rect x="40" y="430" width="970" height="480" rx="14" fill="#f5f8fc" stroke="#c6d3e2" stroke-width="1.5"/>
+  <text class="zone" x="65" y="465">02 控制与执行层｜Extension Service Worker</text>
+  <rect class="card" x="70" y="495" width="280" height="155" rx="9"/>
+  <text class="name" x="90" y="529">消息入口与 MCP 桥接</text><text class="body" x="90" y="562">实例核对 / Chrome API 入口</text><text class="body" x="90" y="592">连接状态 / 心跳 / 重连</text><text class="body" x="90" y="622">旧接口兼容与请求分发</text><text class="file" x="90" y="644">index.ts · bridge.ts</text>
+  <rect class="card" x="375" y="495" width="280" height="155" rx="9"/>
+  <text class="name" x="395" y="529">工作流编排服务</text><text class="body" x="395" y="562">创建 / 编辑 / 校验 / 导入导出</text><text class="body" x="395" y="592">工作流 key / 修订冲突检查</text><text class="body" x="395" y="622">页面检查 / 调试报告协调</text><text class="file" x="395" y="644">authoring.ts</text>
+  <rect class="card" x="680" y="495" width="300" height="155" rx="9"/>
+  <text class="name" x="700" y="529">图运行时</text><text class="body" x="700" y="562">Start 导航 / 变量 / 节点调度</text><text class="body" x="700" y="592">成功失败路径 / 循环 / 验收</text><text class="body" x="700" y="622">互斥 / 步数保护 / 本次上下文</text><text class="file" x="700" y="644">runner.ts · start-navigation.ts</text>
+  <rect class="card" x="70" y="700" width="280" height="150" rx="9"/>
+  <text class="name" x="90" y="735">录制与截图协调</text><text class="body" x="90" y="768">事件会话 / 跳转恢复 / 生成图</text><text class="body" x="90" y="798">captureVisibleTab / 裁剪拼接</text><text class="file" x="90" y="832">recording.ts · screenshot.ts</text>
+  <rect class="card" x="375" y="700" width="280" height="150" rx="9"/>
+  <text class="name" x="395" y="735">Frame 消息与定位</text><text class="body" x="395" y="768">实时 frame / documentId</text><text class="body" x="395" y="798">只读探测后派发 / 不重复操作</text><text class="file" x="395" y="832">frame-messaging.ts · *-messaging.ts</text>
+  <rect class="card" x="680" y="700" width="300" height="150" rx="9"/>
+  <text class="name" x="700" y="735">AI Provider 适配</text><text class="body" x="700" y="768">具名输入 / Chat Completions</text><text class="body" x="700" y="798">解析结果 / invoke 绑定检查*</text><text class="file" x="700" y="832">ai-provider.ts / runner.ts*</text>
+  <text class="label" x="65" y="889">后台模块按职责协作；图运行时由 Page Agent 自行实现，不使用 FlowGram Runtime 执行网页。</text>
+
+  <rect x="1050" y="430" width="510" height="480" rx="14" fill="#f5f8fc" stroke="#c6d3e2" stroke-width="1.5"/>
+  <text class="zone" x="1075" y="465">共享基础模块｜类型 / 存储 / 诊断</text>
+  <rect class="card" x="1080" y="495" width="450" height="99" rx="9"/>
+  <text class="name" x="1100" y="526">工作流模型与交换格式</text><text class="body" x="1100" y="556">节点 / 边 / Start 参数 / JSON 导入导出</text><text class="file" x="1100" y="581">types/workflow.ts · shared/workflow-file.ts</text>
+  <rect class="card" x="1080" y="612" width="450" height="119" rx="9"/>
+  <text class="name" x="1100" y="643">本地库与访问凭据</text><text class="body" x="1100" y="673">显式保存 / 库迁移 / 串行更新 / 实例 ID</text><text class="body" x="1100" y="703">Provider 配置 / 工作流 key / 手动历史</text><text class="file" x="1100" y="723">storage.ts · workflow-keys.ts · provider-storage.ts</text>
+  <rect class="card" x="1080" y="749" width="450" height="101" rx="9"/>
+  <text class="name" x="1100" y="780">诊断与执行结果</text><text class="body" x="1100" y="810">错误码 / 阶段 / 上下文 / 重试策略 / 验收证据</text><text class="file" x="1100" y="836">shared/diagnostics.ts · StepResult / RunResult</text>
+  <text class="label" x="1075" y="889">持久库：storage.local｜录制 / 调试：storage.session</text>
+  <path class="flow" d="M1010 673H1050"/>
+  <text class="label" x="1030" y="625" text-anchor="middle" transform="rotate(-90 1030 625)">类型 / 数据 / 诊断依赖</text>
+
+  <path class="flow" d="M515 910V970"/><text class="label" x="529" y="946">Chrome frame 消息 / 指定文档</text>
+  <rect x="40" y="970" width="1520" height="195" rx="14" fill="#edf6f4" stroke="#b8d1cb" stroke-width="1.5"/>
+  <text class="zone" x="65" y="1005">03 页面能力层｜主文档与各 iframe 的 Content Script</text>
+  <rect class="card" x="70" y="1030" width="340" height="105" rx="9"/>
+  <text class="name" x="90" y="1061">目标选择与交互执行</text><text class="body" x="90" y="1090">Selector / 语义定位 / 事件与结果验收</text><text class="file" x="90" y="1119">selector · target-locator · executor</text>
+  <rect class="card" x="440" y="1030" width="340" height="105" rx="9"/>
+  <text class="name" x="460" y="1061">页面读取与 DOM 检索</text><text class="body" x="460" y="1090">控件快照 / 属性和值 / 正则匹配列表</text><text class="file" x="460" y="1119">inspect.ts · query.ts</text>
+  <rect class="card" x="810" y="1030" width="340" height="105" rx="9"/>
+  <text class="name" x="830" y="1061">日历智能操作</text><text class="body" x="830" y="1090">年月识别 / 导航尝试 / 日期自校验</text><text class="file" x="830" y="1119">calendar.ts</text>
+  <rect class="card" x="1180" y="1030" width="350" height="105" rx="9"/>
+  <text class="name" x="1200" y="1061">录制与截图页面控制</text><text class="body" x="1200" y="1090">事件捕获 / 浮层 / 滚动与样式恢复</text><text class="file" x="1200" y="1119">recorder.ts · screenshot.ts</text>
+  <text class="label" x="65" y="1211">连线表示层间调用或依赖，不表示同层全部模块互相调用；页面数据与模型输出始终是不可信输入。</text>
+  <text class="file" x="1540" y="1242" text-anchor="end">模块名对应当前源码；图不代表已具备统一企业鉴权、审计或策略引擎。</text>
+</svg>

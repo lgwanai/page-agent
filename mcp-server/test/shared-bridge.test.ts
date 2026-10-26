@@ -108,11 +108,48 @@ describe('shared multi-client broker', () => {
     };
     const [a, b] = await Promise.all([makeClient('tool-A'), makeClient('tool-B')]);
     for (const mcp of [a, b]) {
-      expect((await mcp.listTools()).tools.some((tool) => tool.name === 'run_page_workflow')).toBe(true);
+      const tools = (await mcp.listTools()).tools;
+      for (const name of ['run_page_workflow', 'create_page_workflow', 'edit_page_workflow', 'inspect_page_content', 'debug_page_node', 'get_page_workflow_toolkit', 'capture_page_screenshot', 'delete_page_node']) expect(tools.some((tool) => tool.name === name)).toBe(true);
+      expect(JSON.stringify(await mcp.callTool({ name: 'get_page_workflow_toolkit', arguments: {} }))).toContain('templates');
       const result = await mcp.callTool({ name: 'list_page_agent_instances', arguments: {} });
       expect(JSON.stringify(result)).toContain(INSTANCE);
     }
     await a.close();
     expect(JSON.stringify(await b.callTool({ name: 'page_agent_status', arguments: {} }))).toContain(INSTANCE);
+    extension.on('message', (raw) => {
+      const request = JSON.parse(String(raw));
+      if (request.method === 'get_workflow') {
+        extension.send(JSON.stringify({ id: request.id, ok: false, error: '工作流已被修改', diagnostic: { code: 'WORKFLOW_REVISION_CONFLICT', phase: 'editing', context: { actualUpdatedAt: 99 }, retryPolicy: 'after_fix', suggestions: ['重新读取工作流'] } })); return;
+      }
+      if (request.method === 'debug_node') {
+        extension.send(JSON.stringify({ id: request.id, ok: true, result: { result: { ok: false, steps: [], error: '节点不可见' } } })); return;
+      }
+      if (request.method === 'capture_screenshot') {
+        extension.send(JSON.stringify({ id: request.id, ok: true, result: { images: [{ data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRD8AAAAASUVORK5CYII=', mimeType: 'image/png', width: 1, height: 1, offsetY: 0 }], metadata: { mode: request.params.mode, complete: true, scrollRestored: true } } })); return;
+      }
+      extension.send(JSON.stringify({ id: request.id, ok: true, result: { method: request.method, params: request.params } }));
+    });
+    const created = await b.callTool({ name: 'create_page_workflow', arguments: { instanceId: INSTANCE, name: 'SDK 新流程', targetUrl: 'https://example.com' } });
+    expect(JSON.stringify(created)).toContain('create_workflow'); expect(created.isError).not.toBe(true);
+    const edited = await b.callTool({ name: 'edit_page_workflow', arguments: { instanceId: INSTANCE, workflowId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', key: 'test-key', expectedUpdatedAt: 1, operations: [{ type: 'add_node', node: { id: 'wait', name: '等待', kind: 'wait', durationMs: 0 } }] } });
+    expect(JSON.stringify(edited)).toContain('edit_workflow'); expect(edited.isError).not.toBe(true);
+    const deleted = await b.callTool({ name: 'delete_page_node', arguments: { instanceId: INSTANCE, workflowId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', key: 'test-key', expectedUpdatedAt: 2, nodeId: 'wait' } });
+    expect(deleted.isError).not.toBe(true);
+    expect(JSON.stringify(deleted)).toContain('edit_workflow');
+    expect(JSON.stringify(deleted)).toContain('remove_node');
+    expect(JSON.stringify(deleted)).toContain('wait');
+    const badDelete = await b.callTool({ name: 'delete_page_node', arguments: { instanceId: INSTANCE, workflowId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', key: 'test-key', nodeId: 'wait' } });
+    expect(badDelete.isError).toBe(true);
+    const auth = { instanceId: INSTANCE, workflowId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', key: 'PRIVATE-KEY' };
+    const failure = await b.callTool({ name: 'get_page_workflow', arguments: auth });
+    expect(failure.isError).toBe(true); expect(JSON.stringify(failure)).toContain('WORKFLOW_REVISION_CONFLICT');
+    expect(JSON.stringify(failure)).toContain('actualUpdatedAt'); expect(JSON.stringify(failure)).not.toContain('PRIVATE-KEY');
+    const failedRun = await b.callTool({ name: 'debug_page_node', arguments: { ...auth, nodeId: 'input1' } });
+    expect(failedRun.isError).toBe(true);
+    const screenshot = await b.callTool({ name: 'capture_page_screenshot', arguments: { ...auth, mode: 'viewport' } });
+    expect(screenshot.isError).not.toBe(true);
+    expect(screenshot.content).toMatchObject([{ type: 'text' }, { type: 'image', mimeType: 'image/png' }]);
+    const invalidRegion = await b.callTool({ name: 'capture_page_screenshot', arguments: { ...auth, mode: 'region' } });
+    expect(invalidRegion.isError).toBe(true); expect(JSON.stringify(invalidRegion)).toContain('SCREENSHOT_REGION_INVALID');
   });
 });

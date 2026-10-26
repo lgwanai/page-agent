@@ -17,6 +17,7 @@
         "id": { "type": "string", "format": "uuid" },
         "name": { "type": "string", "minLength": 1 },
         "description": { "type": "string" },
+        "tags": { "type": "array", "maxItems": 10, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 30 } },
         "urlPattern": { "type": "string" },
         "createdAt": { "type": "number" },
         "updatedAt": { "type": "number" },
@@ -29,7 +30,12 @@
             "required": ["id", "kind", "name"],
             "properties": {
               "id": { "type": "string", "minLength": 1 },
-              "kind": { "enum": ["start", "dom", "query", "calendar", "ai", "action", "wait", "loop"] },
+              "kind": { "enum": ["start", "dom", "dialog", "query", "output", "watch", "screenshot", "datatable", "tableFill", "email", "calendar", "pagination", "ai", "action", "wait", "loop", "request"] },
+              "body": { "$ref": "#/$defs/workflowBody" },
+              "event": { "$ref": "#/$defs/webEvent" },
+              "keepCurrentPage": { "type": "boolean", "description": "Start 保持当前页面，不导航或刷新；忽略目标 URL 校验" },
+              "stopAtPage": { "type": "string", "description": "分页遍历的包含式终止页码，支持变量；省略表示遍历到末页" },
+              "stopWhen": { "type": "string", "pattern": "^\\{\\{\\s*[^{}]+?\\s*\\}\\}$", "description": "内部流程成功后，引用结果非空时停止翻页，如 {{本页匹配.output}}" },
               "name": { "type": "string", "minLength": 1 },
               "position": {
                 "type": "object",
@@ -38,15 +44,122 @@
               }
             },
             "allOf": [{
+              "if": { "properties": { "kind": { "const": "dom" }, "event": { "type": "object", "required": ["type"], "properties": { "type": { "const": "upload" } } } }, "required": ["event"] },
+              "then": { "properties": { "event": { "type": "object", "required": ["value"], "properties": { "value": { "type": "string", "minLength": 1 } } } } }
+            }, {
+              "if": { "properties": { "kind": { "const": "output" } } },
+              "then": {
+                "required": ["source"],
+                "properties": {
+                  "source": { "enum": ["text", "variable", "node", "dom"] },
+                  "value": { "type": "string" },
+                  "sourceNodeId": { "type": "string", "minLength": 1 },
+                  "path": { "type": "string" },
+                  "outcome": { "enum": ["neutral", "success", "failure"] },
+                  "target": { "type": "object", "required": ["selector", "frameId"], "properties": { "selector": { "type": "string" }, "frameId": { "type": "integer", "minimum": 0 }, "frameUrl": { "type": "string" }, "frameName": { "type": "string", "maxLength": 1000 }, "selectorUpgrade": { "type": "object", "required": ["version", "previous", "upgradedAt", "reason"], "properties": { "version": { "const": 1 }, "previous": { "type": "object" }, "upgradedAt": { "type": "number" }, "reason": { "type": "string" } } }, "locator": {"type": "object", "required": ["version", "selector", "tagName", "confidence", "candidates"], "properties": {"version": {"const": 1}, "selector": {"type": "string", "minLength": 1}, "tagName": {"type": "string", "minLength": 1}, "inputType": {"type": "string"}, "confidence": {"enum": ["high", "medium", "low"]}, "candidates": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object", "required": ["kind", "selector"], "properties": {"kind": {"enum": ["id", "name", "ancestor-exact", "ancestor", "attribute", "text", "class", "tag", "position"]}, "selector": {"type": "string", "minLength": 1}, "anchor": {"type": "string"}, "parentFingerprint": {"type": "string"}, "match": {"type": "object", "required": ["kind", "value"], "properties": {"kind": {"enum": ["text", "value"]}, "value": {"type": "string", "minLength": 1}}}}}}}}, "frameQueryKeys": { "type": "array", "uniqueItems": true, "maxItems": 100, "items": { "type": "string", "minLength": 1 }, "description": "显式保留的页面查询参数；不填写则按完整 URL 精确匹配。" } } },
+                  "read": { "enum": ["text", "value", "attribute"] },
+                  "attributeName": { "type": "string" },
+                  "multiple": { "type": "boolean" }
+                },
+                "allOf": [
+                  { "if": { "properties": { "source": { "enum": ["text", "variable"] } } }, "then": { "required": ["value"] } },
+                  { "if": { "properties": { "source": { "const": "node" } } }, "then": { "required": ["sourceNodeId"] } },
+                  { "if": { "properties": { "source": { "const": "dom" } } }, "then": { "required": ["target", "read"], "allOf": [{ "if": { "properties": { "read": { "const": "attribute" } } }, "then": { "required": ["attributeName"], "properties": { "attributeName": { "type": "string", "minLength": 1 } } } }] } }
+                ]
+              }
+            }, {
+              "if": { "properties": { "kind": { "const": "tableFill" } } },
+              "then": {
+                "required": ["target", "data", "keyColumns", "skipUnmatchedRows"],
+                "properties": {
+                  "target": { "type": "object", "required": ["selector", "frameId"], "properties": { "selector": { "type": "string" }, "frameId": { "type": "integer", "minimum": 0 } } },
+                  "data": { "type": "string" },
+                  "keyColumns": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+                  "skipUnmatchedRows": { "type": "boolean" },
+                  "structure": { "$ref": "#/$defs/tableFillStructure" }
+                }
+              }
+            }, {
+              "if": { "properties": { "kind": { "const": "datatable" } } },
+              "then": { "required": ["target", "header", "parseNumbers", "exportExcel", "fileName"], "properties": { "target": { "type": "object", "required": ["selector", "frameId"], "properties": { "selector": { "type": "string" }, "frameId": { "type": "integer", "minimum": 0 } } }, "header": { "enum": ["auto", "firstRow", "none"] }, "parseNumbers": { "type": "boolean" }, "exportExcel": { "type": "boolean" }, "fileName": { "type": "string" } } }
+            }, {
+              "if": { "properties": { "kind": { "const": "screenshot" } } },
+              "then": {
+                "required": ["mode", "fileName"],
+                "properties": {
+                  "mode": { "enum": ["viewport", "fullPage", "region"] },
+                  "fileName": { "type": "string" },
+                  "region": { "type": "object", "required": ["x", "y", "width", "height"], "properties": { "x": { "type": "number", "minimum": 0 }, "y": { "type": "number", "minimum": 0 }, "width": { "type": "number", "exclusiveMinimum": 0 }, "height": { "type": "number", "exclusiveMinimum": 0 } } }
+                }
+              }
+            }, {
+              "if": { "properties": { "kind": { "const": "request" } } },
+              "then": {
+                "required": ["url", "method", "headers", "body", "responseType", "timeoutMs"],
+                "properties": {
+                  "url": { "type": "string", "minLength": 1 },
+                  "method": { "enum": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] },
+                  "headers": { "type": "string", "description": "JSON object with string values; values may reference variables" },
+                  "body": { "type": "string" },
+                  "responseType": { "enum": ["text", "json"] },
+                  "timeoutMs": { "type": "integer", "minimum": 100, "maximum": 300000 }
+                },
+                "allOf": [{ "if": { "properties": { "method": { "enum": ["GET", "HEAD"] } } }, "then": { "properties": { "body": { "const": "" } } } }]
+              }
+            }, {
+              "if": { "properties": { "kind": { "const": "email" } } },
+              "then": { "required": ["to", "subject", "body", "attachments"], "properties": { "to": { "type": "string" }, "subject": { "type": "string" }, "body": { "type": "string" }, "attachments": { "type": "array", "items": { "type": "string" } } } }
+            }, {
+              "if": { "properties": { "kind": { "const": "dialog" } } },
+              "then": {
+                "required": ["target", "event", "dialogType", "action", "message", "promptText", "timeoutMs"],
+                "properties": {
+                  "target": { "type": "object", "required": ["name", "selector", "frameId", "tagName", "label"], "properties": { "name": { "type": "string" }, "label": { "type": "string" }, "tagName": { "type": "string" }, "selector": { "type": "string", "minLength": 1 }, "frameId": { "type": "integer", "minimum": 0 } } },
+                  "dialogType": { "enum": ["alert", "confirm", "prompt", "beforeunload"] },
+                  "action": { "enum": ["accept", "dismiss"] },
+                  "message": { "type": "string" }, "promptText": { "type": "string" },
+                  "timeoutMs": { "type": "number", "minimum": 100, "maximum": 300000 },
+                  "event": { "not": { "properties": { "type": { "const": "upload" } } } }
+                },
+                "allOf": [{ "if": { "properties": { "dialogType": { "const": "alert" } } }, "then": { "properties": { "action": { "const": "accept" } } } }]
+              }
+            }, {
+              "if": { "properties": { "kind": { "const": "wait" } } },
+              "then": {
+                "required": ["durationMs"],
+                "properties": {
+                  "mode": { "enum": ["fixed", "random"] },
+                  "durationMs": { "type": "integer", "minimum": 0, "maximum": 60000 },
+                  "minDurationMs": { "type": "integer", "minimum": 0, "maximum": 60000 },
+                  "maxDurationMs": { "type": "integer", "minimum": 0, "maximum": 60000 }
+                },
+                "allOf": [{ "if": { "required": ["mode"], "properties": { "mode": { "const": "random" } } }, "then": { "required": ["minDurationMs", "maxDurationMs"] } }]
+              }
+            }, {
+              "if": { "properties": { "kind": { "const": "watch" } } },
+              "then": {
+                "required": ["target", "source", "attributeName", "match", "expected", "timeoutMs", "intervalMs"],
+                "properties": {
+                  "target": { "type": "object", "required": ["selector", "frameId"], "properties": { "selector": { "type": "string" }, "frameId": { "type": "integer", "minimum": 0 } } },
+                  "source": { "enum": ["attribute", "value", "text"] },
+                  "attributeName": { "type": "string" },
+                  "match": { "enum": ["equals", "contains", "regex", "exists"] },
+                  "expected": { "type": "string" },
+                  "timeoutMs": { "type": "number", "minimum": 100, "maximum": 3600000 },
+                  "intervalMs": { "type": "number", "minimum": 100, "maximum": 10000 }
+                }
+              }
+            }, {
               "if": { "properties": { "kind": { "const": "query" } } },
               "then": {
                 "required": ["target", "query"],
                 "properties": {
                   "target": {
                     "type": "object", "required": ["selector", "frameId"],
-                    "properties": { "selector": { "type": "string" }, "frameId": { "type": "integer", "minimum": 0 }, "frameUrl": { "type": "string" } }
+                    "properties": { "selector": { "type": "string" }, "frameId": { "type": "integer", "minimum": 0 }, "frameUrl": { "type": "string" }, "frameName": { "type": "string", "maxLength": 1000 }, "selectorUpgrade": { "type": "object", "required": ["version", "previous", "upgradedAt", "reason"], "properties": { "version": { "const": 1 }, "previous": { "type": "object" }, "upgradedAt": { "type": "number" }, "reason": { "type": "string" } } }, "locator": {"type": "object", "required": ["version", "selector", "tagName", "confidence", "candidates"], "properties": {"version": {"const": 1}, "selector": {"type": "string", "minLength": 1}, "tagName": {"type": "string", "minLength": 1}, "inputType": {"type": "string"}, "confidence": {"enum": ["high", "medium", "low"]}, "candidates": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object", "required": ["kind", "selector"], "properties": {"kind": {"enum": ["id", "name", "ancestor-exact", "ancestor", "attribute", "text", "class", "tag", "position"]}, "selector": {"type": "string", "minLength": 1}, "anchor": {"type": "string"}, "parentFingerprint": {"type": "string"}, "match": {"type": "object", "required": ["kind", "value"], "properties": {"kind": {"enum": ["text", "value"]}, "value": {"type": "string", "minLength": 1}}}}}}}}, "frameQueryKeys": { "type": "array", "uniqueItems": true, "maxItems": 100, "items": { "type": "string", "minLength": 1 } } }
                   },
-                  "query": { "$ref": "#/$defs/domQuery" }
+                  "query": { "$ref": "#/$defs/domQuery" },
+                  "onEmpty": { "enum": ["success", "failure"], "description": "无匹配项时的出口，默认 success；failure 可连接 Output" }
                 }
               }
             }],
@@ -72,11 +185,50 @@
     }
   },
   "$defs": {
+    "webEvent": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "enum": ["click", "doubleClick", "input", "select", "check", "hover", "mouseLeave", "focus", "blur", "focusin", "focusout", "change", "reset", "pressKey", "submit", "scrollIntoView", "scrollPage", "contextMenu", "longPress", "drag", "custom"] },
+        "value": { "type": "string" },
+        "customEvent": { "type": "string" },
+        "code": { "type": "string" },
+        "keepFocus": { "type": "boolean" },
+        "relatedSelector": { "type": "string" },
+        "optionalValue": { "type": "boolean" },
+        "minWaitMs": { "type": "number", "minimum": 0, "maximum": 10000 },
+        "maxWaitMs": { "type": "number", "minimum": 0, "maximum": 10000 },
+        "modifiers": { "type": "object", "additionalProperties": false, "properties": { "alt": { "type": "boolean" }, "ctrl": { "type": "boolean" }, "meta": { "type": "boolean" }, "shift": { "type": "boolean" } } }
+      }
+    },
+    "tableFillStructure": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "表格填充高级结构，留空自动识别；表头和数据行相对完整容器，单元格相对每一行。",
+      "properties": {
+        "headerSelector": { "type": "string", "maxLength": 2000 },
+        "rowSelector": { "type": "string", "maxLength": 2000 },
+        "cellSelector": { "type": "string", "maxLength": 2000 }
+      }
+    },
+    "workflowBody": {
+      "type": "object",
+      "required": ["nodes", "edges"],
+      "properties": {
+        "entryNodeId": { "type": "string", "minLength": 1 },
+        "nodes": { "type": "array", "items": { "allOf": [{ "$ref": "#/properties/workflow/properties/nodes/items" }, { "properties": { "kind": { "not": { "const": "start" } } } }] } },
+        "edges": { "$ref": "#/properties/workflow/properties/edges" }
+      },
+      "additionalProperties": false
+    },
     "domQuery": {
       "type": "object",
       "required": ["candidateSelector", "includeRoot", "source", "attributeName", "match", "pattern", "regexFlags"],
       "properties": {
         "candidateSelector": { "type": "string" },
+        "readSelector": { "type": "string" },
+        "normalizeWhitespace": { "type": "boolean" },
+        "maxResults": { "type": "integer", "minimum": 1, "maximum": 500 },
         "includeRoot": { "type": "boolean" },
         "source": { "enum": ["attribute", "value", "text"] },
         "attributeName": { "type": "string" },

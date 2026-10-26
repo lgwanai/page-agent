@@ -1,0 +1,122 @@
+{
+  "$schema": "https://page-agent.dev/schemas/workflow-v1.json",
+  "schemaVersion": 1,
+  "kind": "page-agent-workflow",
+  "exportedAt": "2026-10-27T00:00:00.000Z",
+  "workflow": {
+    "id": "22222222-2222-4222-8222-222222222201",
+    "name": "手册练习：问候",
+    "description": "只操作本地练习页，不发送业务数据；需要启动 docs:serve。",
+    "nodes": [
+      {
+        "id": "start",
+        "kind": "start",
+        "name": "开始",
+        "inputs": [
+          {
+            "id": "name-input",
+            "name": "姓名",
+            "type": "string",
+            "required": true,
+            "description": "练习页显示的姓名"
+          }
+        ],
+        "targetUrl": "http://127.0.0.1:4180/examples/practice.html",
+        "keepCurrentPage": false,
+        "strictValidation": false,
+        "waitForLogin": false,
+        "loadTimeoutMs": 30000,
+        "loginTimeoutMs": 300000,
+        "settleDelayMs": 100,
+        "position": {
+          "x": 80,
+          "y": 140
+        }
+      },
+      {
+        "id": "fill",
+        "kind": "dom",
+        "name": "填写姓名",
+        "target": {
+          "name": "填写姓名",
+          "selector": "#name",
+          "frameId": 0,
+          "frameUrl": "http://127.0.0.1:4180/examples/practice.html",
+          "tagName": "input",
+          "label": "填写姓名"
+        },
+        "event": {
+          "type": "input",
+          "value": "{{姓名}}"
+        },
+        "position": {
+          "x": 400,
+          "y": 140
+        }
+      },
+      {
+        "id": "greet",
+        "kind": "dom",
+        "name": "显示问候",
+        "target": {
+          "name": "显示问候",
+          "selector": "#greet",
+          "frameId": 0,
+          "frameUrl": "http://127.0.0.1:4180/examples/practice.html",
+          "tagName": "button",
+          "label": "显示问候"
+        },
+        "event": {
+          "type": "click"
+        },
+        "position": {
+          "x": 720,
+          "y": 140
+        }
+      },
+      {
+        "id": "result",
+        "kind": "output",
+        "name": "问候结果",
+        "source": "dom",
+        "target": {
+          "name": "显示结果",
+          "selector": "#result",
+          "frameId": 0,
+          "frameUrl": "http://127.0.0.1:4180/examples/practice.html",
+          "tagName": "output",
+          "label": "显示结果"
+        },
+        "read": "text",
+        "multiple": false,
+        "outcome": "success",
+        "position": {
+          "x": 1040,
+          "y": 140
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "edge-0",
+        "sourceNodeId": "start",
+        "sourcePort": "success",
+        "targetNodeId": "fill"
+      },
+      {
+        "id": "edge-1",
+        "sourceNodeId": "fill",
+        "sourcePort": "success",
+        "targetNodeId": "greet"
+      },
+      {
+        "id": "edge-2",
+        "sourceNodeId": "greet",
+        "sourcePort": "success",
+        "targetNodeId": "result"
+      }
+    ],
+    "createdAt": 1793059200000,
+    "updatedAt": 1793059200000
+  }
+}

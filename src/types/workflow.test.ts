@@ -17,7 +17,10 @@ describe('workflow contract', () => {
     expect(EVENT_LABELS.scrollPage).toBe('滚动页面 / 区域');
     expect(EVENT_LABELS.contextMenu).toBe('右键点击');
     expect(EVENT_LABELS.longPress).toBe('长按');
-    expect(Object.keys(EVENT_LABELS)).toHaveLength(15);
+    expect(EVENT_LABELS.drag).toBe('拖拽移动');
+    expect(Object.keys(EVENT_LABELS)).toHaveLength(22);
+    expect(EVENT_LABELS.focusin).toContain('focusin');
+    expect(EVENT_LABELS.focusout).toContain('focusout');
   });
 
   it.each([
@@ -45,4 +48,9 @@ describe('workflow contract', () => {
       inputs: [], waitForLogin: false, loadTimeoutMs: 30_000, loginTimeoutMs: 300_000, settleDelayMs: 500,
     });
   });
+});
+
+it('defaults file controls to upload while keeping ordinary buttons as clicks', () => {
+  expect(defaultEventForTarget({ name: '上传', selector: '#file', frameId: 0, label: '', tagName: 'input', attributes: { type: 'file' } }).type).toBe('upload');
+  expect(defaultEventForTarget({ name: '按钮', selector: '#button', frameId: 0, label: '', tagName: 'button' }).type).toBe('click');
 });

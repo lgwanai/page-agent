@@ -10,6 +10,16 @@ beforeEach(() => {
 afterEach(() => { document.body.innerHTML = ''; vi.unstubAllGlobals(); });
 
 describe('Query DOM traversal', () => {
+  it('matches only a specified cell but returns its row for later radio selection', () => {
+    document.body.innerHTML = '<table id="scope"><tbody><tr id="row1"><td><input type="radio"></td><td>  茶\n </td><td>352</td></tr><tr id="row2"><td><input type="radio"></td><td>餐饮具</td><td>茶</td></tr></tbody></table>';
+    const config = { ...DEFAULT_DOM_QUERY, candidateSelector: 'tbody > tr', readSelector: ':scope > td:nth-child(2)', source: 'text' as const, match: 'equals' as const, pattern: '茶', normalizeWhitespace: true };
+    expect(queryDom('#scope', config)).toMatchObject([{ selector: '#row1', matchedValue: '茶', tagName: 'tr' }]);
+    expect(queryDom('#scope', { ...config, pattern: '餐' })).toEqual([]);
+    expect(queryDom('#scope', { ...config, readSelector: '.missing' })).toEqual([]);
+    expect(() => queryDom('#scope', { ...config, readSelector: 'td' })).toThrow('必须唯一');
+    expect(queryDom('#scope', { ...config, match: 'exists', maxResults: 1 }).map(row => row.selector)).toEqual(['#row1']);
+    expect(() => queryDom('#scope', { ...config, maxResults: 0 })).toThrow('返回数量');
+  });
   it('finds named attributes, including empty attributes, only inside the scope', () => {
     const matches = queryDom('#scope', { ...DEFAULT_DOM_QUERY, source: 'attribute', attributeName: 'href' });
     expect(matches.map((item) => item.selector)).toEqual(['#first', '#second', '#empty']);

@@ -1,5 +1,5 @@
 import type { DomQuery, DomQueryMatch } from '@/types/workflow';
-import { describeElement } from './selector';
+import { describeElement, selectorFor } from './selector';
 
 function domValue(element: Element): string {
   if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement || element instanceof HTMLSelectElement) return element.value;
@@ -13,6 +13,7 @@ export function queryDom(selector: string, query: DomQuery): Omit<DomQueryMatch,
   if (!roots.length) throw new Error(`Query 检索范围不存在：${selector}`);
   if (!['attribute', 'value', 'text'].includes(query.source)) throw new Error('Query 检索内容类型无效');
   if (!['exists', 'equals', 'contains', 'regex'].includes(query.match)) throw new Error('Query 匹配方式无效');
+  if (query.maxResults !== undefined && (!Number.isInteger(query.maxResults) || query.maxResults < 1 || query.maxResults > 500)) throw new Error('Query 返回数量上限必须为 1～500 的整数');
   const attributeName = query.attributeName.trim();
   if (query.source === 'attribute' && !attributeName) throw new Error('请填写要检索的属性名称');
   let regex: RegExp | undefined;
@@ -27,19 +28,28 @@ export function queryDom(selector: string, query: DomQuery): Omit<DomQueryMatch,
     for (const element of root.querySelectorAll(candidateSelector)) candidates.add(element);
   }
   const ordered = [...candidates].sort((a, b) => a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_PRECEDING ? 1 : -1);
-  return ordered.flatMap((element) => {
-    const matchedValue = query.source === 'attribute' ? element.getAttribute(attributeName)
-      : query.source === 'text' ? element.textContent ?? '' : domValue(element);
+  const result = ordered.flatMap((element) => {
+    const children = query.readSelector?.trim() ? [...element.querySelectorAll(query.readSelector)] : [element];
+    if (children.length > 1) throw new Error(`Query 内部读取位置必须唯一，实际匹配 ${children.length} 个：${query.readSelector}`);
+    if (!children.length) return [];
+    const read = children[0];
+    const rawValue = query.source === 'attribute' ? read.getAttribute(attributeName)
+      : query.source === 'text' ? read.textContent ?? '' : domValue(read);
+    const normalize = (value: string) => query.normalizeWhitespace ? value.replace(/\s+/g, ' ').trim() : value;
+    const matchedValue = rawValue === null ? null : normalize(rawValue);
     if (matchedValue === null) return [];
     let matches = query.match === 'exists';
-    if (query.match === 'equals') matches = matchedValue === query.pattern;
-    if (query.match === 'contains') matches = matchedValue.includes(query.pattern);
+    if (query.match === 'equals') matches = matchedValue === normalize(query.pattern);
+    if (query.match === 'contains') matches = matchedValue.includes(normalize(query.pattern));
     if (regex) { regex.lastIndex = 0; matches = regex.test(matchedValue); }
     if (!matches) return [];
     const description = describeElement(element);
+    description.selector = selectorFor(element);
+    if (description.locator) description.locator.selector = description.selector;
     return [{
       ...description, name: description.label, value: domValue(element), text: element.textContent ?? '',
       matchedValue, attributes: Object.fromEntries([...element.attributes].map((attribute) => [attribute.name, attribute.value])),
     }];
   });
+  return query.maxResults ? result.slice(0, query.maxResults) : result;
 }

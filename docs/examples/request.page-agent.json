@@ -1,0 +1,74 @@
+{
+  "$schema": "https://page-agent.dev/schemas/workflow-v1.json",
+  "schemaVersion": 1,
+  "kind": "page-agent-workflow",
+  "exportedAt": "2026-10-27T00:00:00.000Z",
+  "workflow": {
+    "id": "22222222-2222-4222-8222-222222222202",
+    "name": "手册练习：JSON 请求",
+    "description": "读取本地演示 JSON，保留对象和数组类型。",
+    "nodes": [
+      {
+        "id": "start",
+        "kind": "start",
+        "name": "开始",
+        "inputs": [],
+        "targetUrl": "http://127.0.0.1:4180/examples/practice.html",
+        "keepCurrentPage": false,
+        "strictValidation": false,
+        "waitForLogin": false,
+        "loadTimeoutMs": 30000,
+        "loginTimeoutMs": 300000,
+        "settleDelayMs": 100,
+        "position": {
+          "x": 80,
+          "y": 140
+        }
+      },
+      {
+        "id": "request",
+        "kind": "request",
+        "name": "读取练习数据",
+        "url": "http://127.0.0.1:4180/examples/sample-response.json",
+        "method": "GET",
+        "headers": "{}",
+        "body": "",
+        "responseType": "json",
+        "timeoutMs": 30000,
+        "position": {
+          "x": 420,
+          "y": 140
+        }
+      },
+      {
+        "id": "return",
+        "kind": "output",
+        "name": "返回数据",
+        "source": "node",
+        "sourceNodeId": "request",
+        "path": "",
+        "outcome": "success",
+        "position": {
+          "x": 760,
+          "y": 140
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "edge-0",
+        "sourceNodeId": "start",
+        "sourcePort": "success",
+        "targetNodeId": "request"
+      },
+      {
+        "id": "edge-1",
+        "sourceNodeId": "request",
+        "sourcePort": "success",
+        "targetNodeId": "return"
+      }
+    ],
+    "createdAt": 1793059200000,
+    "updatedAt": 1793059200000
+  }
+}

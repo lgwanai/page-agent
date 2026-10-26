@@ -105,3 +105,12 @@ describe('Start navigation load barrier', () => {
     expect(committed.size()).toBe(0);
   });
 });
+
+it('cancels a pending navigation and removes all tab listeners', async () => {
+  const { updated, removed, committed } = setup();
+  const controller = new AbortController();
+  const pending = navigateToStartUrl(1, 'https://example.com/next', 60000, undefined, controller.signal);
+  controller.abort();
+  await expect(pending).rejects.toThrow('运行已停止');
+  expect(updated.size()).toBe(0); expect(removed.size()).toBe(0); expect(committed.size()).toBe(0);
+});

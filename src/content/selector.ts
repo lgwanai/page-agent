@@ -1,4 +1,6 @@
+import { captureLocator, cssSelectorFor, stableId } from './locator-plan';
 import type { PageTarget } from '@/types/workflow';
+import { captureFrameContext } from '@/shared/frame-context';
 
 const OVERLAY_ID = '__page_agent_select_overlay__';
 const HIGHLIGHT_ID = '__page_agent_highlight__';
@@ -6,54 +8,7 @@ const TOOLTIP_ID = '__page_agent_tooltip__';
 
 let cleanupActiveSelector: (() => void) | null = null;
 
-function escapeCss(value: string): string {
-  return CSS.escape(value);
-}
-
-function isUnique(selector: string): boolean {
-  try {
-    return document.querySelectorAll(selector).length === 1;
-  } catch {
-    return false;
-  }
-}
-
-export function selectorFor(element: Element): string {
-  if (element === document.documentElement) return 'html';
-  const html = element as HTMLElement;
-  if (html.id) {
-    const selector = `#${escapeCss(html.id)}`;
-    if (isUnique(selector)) return selector;
-  }
-
-  for (const attribute of ['data-testid', 'data-test', 'data-qa', 'name', 'aria-label', 'placeholder']) {
-    const value = element.getAttribute(attribute);
-    if (!value) continue;
-    const selector = `${element.tagName.toLowerCase()}[${attribute}="${escapeCss(value)}"]`;
-    if (isUnique(selector)) return selector;
-  }
-
-  const parts: string[] = [];
-  let current: Element | null = element;
-  while (current && current !== document.documentElement) {
-    let part = current.tagName.toLowerCase();
-    const stableClasses = [...current.classList]
-      .filter((name) => !/^(css-|jsx-|ng-|v-)/i.test(name) && !/(^|[-_])(active|focus|focused|hover|selected)([-_]|$)/i.test(name))
-      .slice(0, 2);
-    if (stableClasses.length) part += stableClasses.map((name) => `.${escapeCss(name)}`).join('');
-
-    const parent: Element | null = current.parentElement;
-    if (parent) {
-      const sameTag = [...parent.children].filter((child) => child.tagName === current!.tagName);
-      if (sameTag.length > 1) part += `:nth-of-type(${sameTag.indexOf(current) + 1})`;
-    }
-    parts.unshift(part);
-    const selector = parts.join(' > ');
-    if (isUnique(selector)) return selector;
-    current = parent;
-  }
-  return parts.join(' > ');
-}
+export const selectorFor = cssSelectorFor;
 
 function elementLabel(element: Element): string {
   const html = element as HTMLElement;
@@ -71,13 +26,13 @@ function elementLabel(element: Element): string {
     .slice(0, 80);
 }
 
-function selectionTarget(element: Element): Element {
-  return element.closest('button,a,input,textarea,select,option,label,summary,[contenteditable="true"],[role="button"],[role="link"],[role="option"],[role="menuitem"],[onclick]') ?? element;
+export function selectionTarget(element: Element): Element {
+  return element.closest('button,a,input,textarea,select,option,label,summary,[contenteditable="true"],[contenteditable=""],[contenteditable="plaintext-only"],[role="button"],[role="link"],[role="option"],[role="menuitem"],[onclick]') ?? element;
 }
 
 export function describeElement(element: Element): Omit<PageTarget, 'frameId'> {
   const attributes: Record<string, string> = {};
-  for (const key of ['id', 'name', 'type', 'role', 'aria-label', 'placeholder', 'data-testid', 'contenteditable', 'disabled', 'multiple', 'tabindex']) {
+  for (const key of ['id', 'name', 'type', 'role', 'aria-label', 'placeholder', 'data-testid', 'data-test', 'data-qa', 'contenteditable', 'disabled', 'multiple', 'accept', 'tabindex']) {
     const value = element.getAttribute(key);
     if (value !== null) attributes[key] = value;
   }
@@ -87,10 +42,12 @@ export function describeElement(element: Element): Omit<PageTarget, 'frameId'> {
       label: (option.textContent ?? option.value).replace(/\s+/g, ' ').trim(),
     }))
     : undefined;
+  const locator = captureLocator(element);
   return {
     name: '',
-    selector: selectorFor(element),
-    frameUrl: location.href,
+    selector: locator.selector, locator,
+    ...(window.name && window.name.length <= 1000 && stableId(window.name) && !/^(?:frame|iframe)[_-]?\d+$/i.test(window.name) ? { frameName: window.name } : {}),
+    ...captureFrameContext(location.href),
     tagName: element.tagName.toLowerCase(),
     label: elementLabel(element),
     text: (element.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 160),
@@ -157,8 +114,8 @@ export function startSelecting(onSelect: (target: Omit<PageTarget, 'frameId'>) =
   const click = (event: MouseEvent) => {
     event.preventDefault();
     event.stopImmediatePropagation();
-    const rawTarget = hovered ? null : underlying(event.clientX, event.clientY);
-    hovered ??= rawTarget ? exactElement ? rawTarget : selectionTarget(rawTarget) : null;
+    const rawTarget = underlying(event.clientX, event.clientY);
+    hovered = rawTarget ? exactElement ? rawTarget : selectionTarget(rawTarget) : null;
     if (!hovered) return;
     const selected = describeElement(hovered);
     stopSelecting();

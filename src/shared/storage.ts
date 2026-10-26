@@ -1,3 +1,6 @@
+import { removeWorkflowKey } from './workflow-keys';
+import { EDITOR_DRAFT_KEY, isEditorDraft } from './editor-draft';
+import { mutateRunHistory } from './run-history';
 import { allowedEventsForTarget, createStartNode, defaultEventForTarget, DEFAULT_DOM_QUERY, type WorkflowEdge, type WorkflowNode, type WorkspaceState } from '@/types/workflow';
 
 const STORAGE_KEY = 'pageAgentLibraryV2';
@@ -9,6 +12,7 @@ interface StoredLibraryV2 {
   schemaVersion: 2;
   actions: WorkspaceState['actions'];
   scripts: WorkspaceState['scripts'];
+  trash?: WorkspaceState['trash'];
 }
 
 function linearEdges(nodes: Array<{ id: string }>): WorkflowEdge[] {
@@ -49,6 +53,7 @@ function migrateNodes(nodes: WorkspaceState['draft']): WorkspaceState['draft'] {
       },
       query: { ...DEFAULT_DOM_QUERY, ...node.query },
     };
+    if ((node.kind === 'loop' || node.kind === 'pagination') && node.body) return { ...node, position, body: { ...node.body, nodes: migrateNodes(node.body.nodes) } };
     return { ...node, position };
   });
 }
@@ -117,21 +122,21 @@ export async function loadWorkspace(): Promise<WorkspaceState> {
       if (!validUuid) workflowIdsMigrated = true;
       return { ...script, id: validUuid ? script.id : crypto.randomUUID(), ...graph };
     }) : [],
-    // The editor is intentionally session-only. A saved Action or Script must be
-    // explicitly opened before it becomes an editable graph again.
+    ...(Array.isArray(stored?.trash) ? { trash: stored.trash } : {}),
+    // Recoverable editor drafts live separately from the executable library.
     draft: [],
     draftEdges: [],
   };
   if (value[LEGACY_STORAGE_KEY]) {
     if (!value[STORAGE_KEY]) {
       await chrome.storage.local.set({
-        [STORAGE_KEY]: { schemaVersion: 2, actions: workspace.actions, scripts: workspace.scripts } satisfies StoredLibraryV2,
+        [STORAGE_KEY]: { schemaVersion: 2, actions: workspace.actions, scripts: workspace.scripts, ...(workspace.trash?.length ? { trash: workspace.trash } : {}) } satisfies StoredLibraryV2,
       });
     }
     await chrome.storage.local.remove(LEGACY_STORAGE_KEY);
   } else if (workflowIdsMigrated) {
     await chrome.storage.local.set({
-      [STORAGE_KEY]: { schemaVersion: 2, actions: workspace.actions, scripts: workspace.scripts } satisfies StoredLibraryV2,
+      [STORAGE_KEY]: { schemaVersion: 2, actions: workspace.actions, scripts: workspace.scripts, ...(workspace.trash?.length ? { trash: workspace.trash } : {}) } satisfies StoredLibraryV2,
     });
   }
   return workspace;
@@ -142,7 +147,102 @@ export async function saveWorkspace(state: WorkspaceState): Promise<void> {
     schemaVersion: 2,
     actions: state.actions ?? [],
     scripts: state.scripts ?? [],
+    ...(state.trash?.length ? { trash: state.trash } : {}),
   };
   await chrome.storage.local.set({ [STORAGE_KEY]: library });
   await chrome.runtime.sendMessage({ type: 'PAGE_AGENT_STATE_CHANGED' }).catch(() => undefined);
+}
+
+let mutationQueue: Promise<unknown> = Promise.resolve();
+/** Serialize read/modify/write operations in the extension background. */
+export function mutateWorkspace<T>(change: (state: WorkspaceState) => T | Promise<T>): Promise<T> {
+  const task = mutationQueue.then(async () => {
+    const state = await loadWorkspace();
+    const result = await change(state);
+    await saveWorkspace(state);
+    return result;
+  });
+  mutationQueue = task.catch(() => undefined);
+  return task;
+}
+
+/** Metadata-only update: never replace a graph or recreate its ID/access key. */
+export function renameWorkflow(id: string, name: string, expectedUpdatedAt: number) {
+  if (typeof name !== 'string' || !name.trim() || name.trim().length > 120 || /[\r\n\u0000-\u001f]/.test(name)) return Promise.reject(new Error('工作流名称需为 1–120 个字符，不能包含换行或控制字符'));
+  if (!Number.isFinite(expectedUpdatedAt)) return Promise.reject(new Error('缺少工作流版本，请刷新后重试'));
+  return mutateWorkspace(state => {
+    const workflow = state.scripts.find(item => item.id === id);
+    if (!workflow) throw new Error('工作流已不存在，请刷新列表');
+    if (workflow.updatedAt !== expectedUpdatedAt) throw new Error('工作流已被其他客户端更新，请刷新后重新命名');
+    if (workflow.name !== name.trim()) { workflow.name = name.trim(); workflow.updatedAt = Math.max(Date.now(), workflow.updatedAt + 1); }
+    return structuredClone(workflow);
+  });
+}
+
+/** Delete only the selected revision, preserving concurrent changes to other workflows. */
+export function deleteWorkflow(id: string, expectedUpdatedAt: number) {
+  if (!Number.isFinite(expectedUpdatedAt)) return Promise.reject(new Error('缺少工作流版本，请刷新后重试'));
+  return mutateWorkspace(state => {
+    const workflow = state.scripts.find(item => item.id === id);
+    if (!workflow) throw new Error('工作流已不存在，请刷新列表');
+    if (workflow.updatedAt !== expectedUpdatedAt) throw new Error('工作流已被其他客户端更新，请刷新后重新删除');
+    state.trash = [...(state.trash ?? []), { workflow: structuredClone(workflow), deletedAt: Date.now() }];
+    state.scripts = state.scripts.filter(item => item.id !== id);
+  });
+}
+
+export function restoreWorkflow(id: string) {
+  return mutateWorkspace(state => {
+    const entry = state.trash?.find(item => item.workflow.id === id);
+    if (!entry) throw new Error('回收站中未找到此工作流');
+    if (state.scripts.some(item => item.id === id)) throw new Error('工作流 ID 已被占用，请先导出回收站中的工作流');
+    state.scripts.push({ ...entry.workflow, updatedAt: Math.max(Date.now(), entry.workflow.updatedAt + 1) });
+    state.trash = state.trash!.filter(item => item.workflow.id !== id);
+  });
+}
+
+export function updateWorkflowTags(id: string, tags: string[], expectedUpdatedAt: number) {
+  if (!Array.isArray(tags) || tags.length > 10 || tags.some(tag => typeof tag !== 'string' || !tag.trim() || tag.length > 30)) return Promise.reject(new Error('最多 10 个标签，每个 1–30 个字符'));
+  return mutateWorkspace(state => {
+    const workflow = state.scripts.find(item => item.id === id);
+    if (!workflow || workflow.updatedAt !== expectedUpdatedAt) throw new Error('工作流已更新或不存在，请刷新后重试');
+    workflow.tags = [...new Set(tags.map(tag => tag.trim()))];
+    workflow.updatedAt = Math.max(Date.now(), workflow.updatedAt + 1);
+  });
+}
+
+/** Whole-library replacement is legacy API: require explicit revisions, never bypass the queue. */
+export function replaceWorkspace(next: WorkspaceState, expectedRevisions?: Record<string, number>) {
+  if (!expectedRevisions || typeof expectedRevisions !== 'object' || Array.isArray(expectedRevisions)) return Promise.reject(new Error('替换工作流库必须提供 expectedRevisions，请先读取最新工作区'));
+  return mutateWorkspace(latest => {
+    const revisions = Object.fromEntries(latest.scripts.map(script => [script.id, script.updatedAt]));
+    if (Object.keys(revisions).length !== Object.keys(expectedRevisions).length || Object.entries(revisions).some(([id, version]) => expectedRevisions[id] !== version)) throw new Error('工作流库已被其他客户端更新，请重新打开工作流后保存');
+    if (!next || !Array.isArray(next.scripts) || !Array.isArray(next.actions)) throw new Error('工作流库格式无效');
+    if (new Set(next.scripts.map(script => script.id)).size !== next.scripts.length || next.scripts.some(script => !script || typeof script.id !== 'string' || !script.id || typeof script.name !== 'string' || !script.name.trim() || !Number.isFinite(script.updatedAt) || !Array.isArray(script.nodes) || !Array.isArray(script.edges))) throw new Error('工作流库包含无效或重复的工作流');
+    if (latest.scripts.some(script => !next.scripts.some(item => item.id === script.id))) throw new Error('请使用删除工作流入口移入回收站，不能通过整库替换删除');
+    const trashedIds = new Set(latest.trash?.map(entry => entry.workflow.id));
+    if (next.scripts.some(script => trashedIds.has(script.id))) throw new Error('工作流已在回收站，请先恢复或使用新的 ID');
+    if (JSON.stringify(next.actions) !== JSON.stringify(latest.actions)) throw new Error('整库保存不能修改旧 Action，请使用工作流编辑接口');
+    latest.scripts = next.scripts.map(script => {
+      const current = latest.scripts.find(item => item.id === script.id);
+      if (!current) return script;
+      const { lastRunAt: _beforeRun, ...before } = current;
+      const { lastRunAt: _afterRun, ...after } = script;
+      const changed = JSON.stringify(before) !== JSON.stringify(after);
+      return { ...script, updatedAt: changed ? Math.max(Date.now(), current.updatedAt + 1, script.updatedAt) : current.updatedAt, ...(current.lastRunAt ? { lastRunAt: Math.max(script.lastRunAt ?? 0, current.lastRunAt) } : {}) };
+    });
+  });
+}
+
+export function purgeWorkflow(id: string) {
+  return mutateWorkspace(async state => {
+    if (state.scripts.some(item => item.id === id)) throw new Error('请先将工作流移入回收站');
+    if (!state.trash?.some(item => item.workflow.id === id)) throw new Error('回收站中未找到此工作流');
+    await removeWorkflowKey(id);
+    await mutateRunHistory(entries => entries.filter(entry => entry.workflowId !== id));
+    await chrome.storage.local.remove([`pageAgentRunInputs:${id}`, `pageAgentDebug:${id}`]);
+    const stored = await chrome.storage.local.get(EDITOR_DRAFT_KEY);
+    if (isEditorDraft(stored[EDITOR_DRAFT_KEY]) && stored[EDITOR_DRAFT_KEY].editing?.id === id) await chrome.storage.local.set({ [EDITOR_DRAFT_KEY]: null });
+    state.trash = state.trash.filter(item => item.workflow.id !== id);
+  });
 }

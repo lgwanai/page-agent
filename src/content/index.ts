@@ -1,14 +1,23 @@
+import { repairLegacyTarget } from './legacy-target';
+import { prepareUpload, validateUpload, verifyUpload, releaseUpload, clearUploadTargets } from './upload';
+import { CONTENT_VERSION } from '@/shared/release';
 import type { RuntimeMessage } from '@/types/messages';
 import { executeEvent, resolveSemanticTarget } from './executor';
 import { startSelecting, stopSelecting } from './selector';
 import { isRecording, startRecording, stopRecording } from './recorder';
 import { queryDom } from './query';
+import { readOutputDom } from './output';
 import { selectCalendarDate } from './calendar';
+import { navigatePagination, readPagination } from './pagination';
 import { locateEventTarget } from './target-locator';
+import { inspectPage } from './inspect';
+import { restoreScreenshot, screenshotControl } from './screenshot';
+import { pickScreenshotRegion, cancelRegionPicker } from './region-picker';
+import { readDataTable } from './datatable';
+import { fillTable } from './table-fill';
 
-interface ContentInstallation { version: string; dispose: () => void }
+interface ContentInstallation { version: string; alive?: () => boolean; dispose: () => void }
 const contentWindow = window as Window & { __pageAgentLoaded?: boolean; __pageAgentInstallation?: ContentInstallation };
-const CONTENT_VERSION = 'target-locator-v0.10.15';
 
 function waitForDocument(): Promise<void> {
   if (document.documentElement) return Promise.resolve();
@@ -24,8 +33,12 @@ function waitForDocument(): Promise<void> {
   });
 }
 
-if (contentWindow.__pageAgentInstallation?.version !== CONTENT_VERSION) {
-  contentWindow.__pageAgentInstallation?.dispose();
+const installation = contentWindow.__pageAgentInstallation;
+let alive = false;
+try { alive = installation?.alive?.() === true; } catch { /* invalidated extension context */ }
+if (installation?.version !== CONTENT_VERSION || !alive) {
+  try { installation?.dispose(); } catch { console.warn('[page-agent] 正在替换失效的页面脚本'); }
+  const installedRuntime = chrome.runtime;
   contentWindow.__pageAgentLoaded = true;
   let recordingStartedAt: number | null = null;
   const pendingEvents = new Set<Promise<void>>();
@@ -57,8 +70,63 @@ if (contentWindow.__pageAgentInstallation?.version !== CONTENT_VERSION) {
   };
 
   const listener: Parameters<typeof chrome.runtime.onMessage.addListener>[0] = (message: RuntimeMessage, _sender, sendResponse) => {
+    // Resolve captured semantics once for every target-based operation, then pass
+    // an exact CSS handle to existing executors. Release it with the response.
+    const captured = message as RuntimeMessage & { selector?: string; targetHint?: import('@/types/workflow').RecordedTargetHint };
+    if (message.type !== 'PAGE_AGENT_LOCATE_SELECTOR' && captured.selector && captured.targetHint?.locator?.selector === captured.selector) {
+      try {
+        const element = locateEventTarget(captured.selector, captured.targetHint);
+        if (!element) throw new Error('节点不存在或身份已改变');
+        const attribute = 'data-page-agent-resolved-' + crypto.randomUUID();
+        element.setAttribute(attribute, '');
+        const originalResponse = sendResponse;
+        const timer = setTimeout(() => element.removeAttribute(attribute), 120_000);
+        sendResponse = response => { clearTimeout(timer); element.removeAttribute(attribute); originalResponse(response); };
+        message = { ...message, selector: '[' + attribute + ']', targetHint: undefined } as RuntimeMessage;
+      } catch (error) { sendResponse({ ok: false, error: (error as Error).message }); return false; }
+    }
+    if (message.type === 'PAGE_AGENT_REPAIR_TARGET') {
+      try { const target = repairLegacyTarget(message.target); sendResponse({ ok: true, targetUpgrade: 1, target }); }
+      catch (error) { sendResponse({ ok: false, targetUpgrade: 1, error: (error as Error).message }); }
+      return false;
+    }
+    if (message.type === 'PAGE_AGENT_FILL_TABLE') {
+      void fillTable(message.selector, message.data, message.keyColumns, message.skipUnmatchedRows, message.structure)
+        .then(data => sendResponse({ ok: true, data }))
+        .catch((error: Error & { report?: unknown }) => sendResponse({ ok: false, error: error.message, report: error.report }));
+      return true;
+    }
+    if(message.type==='PAGE_AGENT_READ_DATATABLE'){
+      try{sendResponse({ok:true,data:readDataTable(message.selector,message.header,message.parseNumbers)});}catch(error){sendResponse({ok:false,error:(error as Error).message});}
+      return false;
+    }
+    if (message.type === 'PAGE_AGENT_PICK_SCREENSHOT_REGION') {
+      stopSelecting();
+      void pickScreenshotRegion().then((result)=>sendResponse({ok:true,result})).catch((error:Error)=>sendResponse({ok:false,error:error.message}));
+      return true;
+    }
+    if (message.type === 'PAGE_AGENT_PAGINATION') {
+      if (message.page === undefined) {
+        try { sendResponse({ ok: true, data: readPagination(message.selector) }); }
+        catch (error) { sendResponse({ ok: false, error: (error as Error).message }); }
+      } else {
+        void navigatePagination(message.selector, message.page, message)
+          .then(({ output, verification }) => sendResponse({ ok: true, data: output, verification }))
+          .catch((error: Error & { verification?: unknown }) => sendResponse({ ok: false, error: error.message, verification: error.verification }));
+      }
+      return true;
+    }
+    if (message.type === 'PAGE_AGENT_SCREENSHOT_CONTROL') {
+      void screenshotControl(message).then(sendResponse).catch((error: Error) => sendResponse({ ok: false, error: error.message }));
+      return true;
+    }
+    if (message.type === 'PAGE_AGENT_INSPECT_PAGE') {
+      try { sendResponse(inspectPage(message.selector, message.maxNodes, message.maxText)); }
+      catch (error) { sendResponse({ ok: false, error: (error as Error).message }); }
+      return false;
+    }
     if (message.type === 'PAGE_AGENT_PING') {
-      sendResponse({ ok: true, href: location.href, title: document.title, frameLocator: true });
+      sendResponse({ ok: true, href: location.href, title: document.title, frameLocator: true, targetUpgrade: 1, contentVersion: CONTENT_VERSION });
       return false;
     }
     if (message.type === 'PAGE_AGENT_LOCATE_SELECTOR') {
@@ -91,6 +159,22 @@ if (contentWindow.__pageAgentInstallation?.version !== CONTENT_VERSION) {
       }
       void Promise.all([...pendingEvents]).then(() => sendResponse({ ok: !recordingError, error: recordingError }));
       return true;
+    }
+    if (message.type === 'PAGE_AGENT_PREPARE_UPLOAD') {
+      try { sendResponse({ ok: true, data: prepareUpload(message.selector) }); }
+      catch (error) { sendResponse({ ok: false, error: (error as Error).message }); }
+      return false;
+    }
+    if (message.type === 'PAGE_AGENT_VALIDATE_UPLOAD' || message.type === 'PAGE_AGENT_VERIFY_UPLOAD') {
+      try { sendResponse({ ok: true, data: message.type === 'PAGE_AGENT_VALIDATE_UPLOAD' ? validateUpload(message.token, message.files) : verifyUpload(message.token, message.files) }); }
+      catch (error) { sendResponse({ ok: false, error: (error as Error).message }); }
+      return false;
+    }
+    if (message.type === 'PAGE_AGENT_RELEASE_UPLOAD') { releaseUpload(message.token); sendResponse({ ok: true }); return false; }
+    if (message.type === 'PAGE_AGENT_READ_OUTPUT') {
+      try { sendResponse({ ok: true, data: readOutputDom(message.selector, message.read, message.attributeName, message.multiple) }); }
+      catch (error) { sendResponse({ ok: false, error: (error as Error).message }); }
+      return false;
     }
     if (message.type === 'PAGE_AGENT_EXECUTE_EVENT') {
       let matched: Element | null;
@@ -167,14 +251,17 @@ if (contentWindow.__pageAgentInstallation?.version !== CONTENT_VERSION) {
   document.addEventListener('DOMContentLoaded', syncRecording);
   contentWindow.__pageAgentInstallation = {
     version: CONTENT_VERSION,
+    alive: () => Boolean(installedRuntime.id) && !disposed,
     dispose: () => {
-      disposed = true;
+      cancelRegionPicker();
+      disposed = true; clearUploadTargets();
       recordingRevision += 1;
       window.removeEventListener('pageshow', syncRecording);
       document.removeEventListener('DOMContentLoaded', syncRecording);
-      chrome.runtime.onMessage.removeListener(listener);
+      try { installedRuntime.onMessage.removeListener(listener); } catch { /* previous extension context is gone */ }
       stopRecording();
       stopSelecting();
+      restoreScreenshot();
     },
   };
   // Every new document (including iframes) rejoins the current recording before load completes.

@@ -6,7 +6,7 @@ import { verifyWorkflowKey } from '@/shared/workflow-keys';
 import { runScript } from './runner';
 
 vi.mock('@/shared/instance', () => ({ getInstanceId: vi.fn().mockResolvedValue('instance-A') }));
-vi.mock('@/shared/storage', () => ({ loadWorkspace: vi.fn(), saveWorkspace: vi.fn() }));
+vi.mock('@/shared/storage', () => ({ loadWorkspace: vi.fn(), replaceWorkspace: vi.fn() }));
 vi.mock('@/shared/workflow-keys', () => ({ ensureWorkflowKeys: vi.fn(), verifyWorkflowKey: vi.fn() }));
 vi.mock('./runner', () => ({ runScript: vi.fn().mockResolvedValue({ ok: true, steps: [] }), runAction: vi.fn() }));
 

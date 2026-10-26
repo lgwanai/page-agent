@@ -17,32 +17,27 @@ async function saveKeys(keys: WorkflowKeys): Promise<void> {
   await chrome.storage.local.set({ [WORKFLOW_KEYS_STORAGE]: keys });
 }
 
-export async function ensureWorkflowKey(workflowId: string): Promise<string> {
-  const keys = await loadKeys();
-  if (keys[workflowId]) return keys[workflowId];
-  const key = randomKey();
-  await saveKeys({ ...keys, [workflowId]: key });
-  return key;
+let queue: Promise<unknown> = Promise.resolve();
+function mutateKeys<T>(change: (keys: WorkflowKeys) => T): Promise<T> {
+  const task = queue.then(async () => { const keys = await loadKeys(); const result = change(keys); await saveKeys(keys); return result; });
+  queue = task.catch(() => undefined); return task;
 }
-
-export async function ensureWorkflowKeys(workflowIds: string[]): Promise<void> {
-  const keys = await loadKeys();
-  let changed = false;
-  for (const id of workflowIds) {
-    if (!keys[id]) { keys[id] = randomKey(); changed = true; }
-  }
-  if (changed) await saveKeys(keys);
+export function ensureWorkflowKey(workflowId: string): Promise<string> {
+  return mutateKeys(keys => keys[workflowId] ||= randomKey());
 }
-
-export async function rotateWorkflowKey(workflowId: string): Promise<string> {
-  const keys = await loadKeys();
-  const key = randomKey();
-  await saveKeys({ ...keys, [workflowId]: key });
-  return key;
+export function ensureWorkflowKeys(workflowIds: string[]): Promise<void> {
+  return mutateKeys(keys => { for (const id of workflowIds) keys[id] ||= randomKey(); });
+}
+export function rotateWorkflowKey(workflowId: string): Promise<string> {
+  return mutateKeys(keys => keys[workflowId] = randomKey());
+}
+export function removeWorkflowKey(workflowId: string): Promise<void> {
+  return mutateKeys(keys => { delete keys[workflowId]; });
 }
 
 export async function verifyWorkflowKey(workflowId: string, supplied: string): Promise<boolean> {
   if (!supplied) return false;
+  await queue;
   const keys = await loadKeys();
   const expected = keys[workflowId];
   if (!expected || expected.length !== supplied.length) return false;

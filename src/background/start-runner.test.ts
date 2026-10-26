@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { runGraph } from './runner';
+import { debugNode, runGraph } from './runner';
 import { navigateToStartUrl } from './start-navigation';
 import { createStartNode, type WorkflowNode } from '@/types/workflow';
 
@@ -22,6 +22,42 @@ function setup(url = 'https://example.com/app?view=wrong') {
 afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); });
 
 describe('Start always opens its configured URL', () => {
+  it.each(['run', 'debug'])('navigates from chrome:// before attaching the alert debugger (%s)', async mode => {
+    const { start } = setup('chrome://extensions/');
+    const committed = new Set<(event: chrome.webNavigation.WebNavigationTransitionCallbackDetails) => void>();
+    Object.assign(chrome, {
+      debugger: { attach: vi.fn(async () => { if ((await chrome.tabs.get(1)).url?.startsWith('chrome:')) throw new Error('Cannot access a chrome:// URL'); }), detach: vi.fn().mockResolvedValue(undefined), sendCommand: vi.fn().mockResolvedValue(undefined), onEvent: { addListener: vi.fn(), removeListener: vi.fn() } },
+      webNavigation: { onCommitted: { addListener: vi.fn(fn => committed.add(fn)), removeListener: vi.fn(fn => committed.delete(fn)) } },
+    });
+    const navigate = vi.mocked(navigateToStartUrl).getMockImplementation()!;
+    vi.mocked(navigateToStartUrl).mockImplementation(async (...args) => {
+      expect(chrome.debugger.attach).not.toHaveBeenCalled();
+      const tab = await navigate(...args);
+      committed.forEach(fn => fn({ tabId: 1, frameId: 0, url: tab.url } as chrome.webNavigation.WebNavigationTransitionCallbackDetails));
+      return tab;
+    });
+    const result = mode === 'run' ? await runGraph([start], []) : await debugNode([start], start.id, {});
+    expect(result.ok).toBe(true);
+    expect(result.steps[0].data).toMatchObject({ navigated: true, previousUrl: 'chrome://extensions/', url: start.targetUrl });
+    expect(chrome.debugger.attach).toHaveBeenCalledOnce(); expect(chrome.debugger.detach).toHaveBeenCalledOnce(); expect(committed.size).toBe(0);
+  });
+  it.each(['run', 'debug'])('reports debugger setup errors against Start instead of throwing outside the node (%s)', async mode => {
+    const { start } = setup();
+    Object.assign(chrome, { debugger: { attach: vi.fn().mockRejectedValue(new Error('Another debugger is attached')), onEvent: { addListener: vi.fn(), removeListener: vi.fn() } } });
+    const result = mode === 'run' ? await runGraph([start], []) : await debugNode([start], start.id, {});
+    expect(result.ok).toBe(false);
+    expect(result.steps[0]).toMatchObject({ ok: false, nodeId: start.id, diagnostic: { context: { nodeId: start.id, nodeKind: 'start' } } });
+    expect(result.error).toContain('Another debugger');
+    if (mode === 'run') expect(result.runId).toBeTruthy();
+    expect(navigateToStartUrl).not.toHaveBeenCalled();
+  });
+  it('preserves the manually prepared page even when a different URL and login checks are configured', async () => {
+    const { start } = setup();
+    const result = await runGraph([{ ...start, keepCurrentPage: true, strictValidation: true, waitForLogin: true }], []);
+    expect(result.ok).toBe(true);
+    expect(navigateToStartUrl).not.toHaveBeenCalled();
+    expect(JSON.stringify(result)).toContain('view=wrong');
+  });
   it('emits live start and completed progress before returning the result', async () => {
     const { start } = setup();
     const progress = vi.fn();
@@ -45,7 +81,7 @@ describe('Start always opens its configured URL', () => {
     const { start } = setup('https://example.com/app?view=correct');
     const result = await runGraph([start], []);
     expect(result.ok).toBe(true);
-    expect(navigateToStartUrl).toHaveBeenCalledWith(1, start.targetUrl, 30000, start.targetUrl);
+    expect(navigateToStartUrl).toHaveBeenCalledWith(1, start.targetUrl, 30000, start.targetUrl, expect.any(AbortSignal));
     expect(result.steps[0].data).toMatchObject({ navigated: true, requestedUrl: start.targetUrl, previousUrl: start.targetUrl, url: start.targetUrl });
   });
 
@@ -53,7 +89,7 @@ describe('Start always opens its configured URL', () => {
     const { start } = setup();
     const result = await runGraph([start], []);
     expect(result.ok).toBe(true);
-    expect(navigateToStartUrl).toHaveBeenCalledWith(1, start.targetUrl, 30000, 'https://example.com/app?view=wrong');
+    expect(navigateToStartUrl).toHaveBeenCalledWith(1, start.targetUrl, 30000, 'https://example.com/app?view=wrong', expect.any(AbortSignal));
     expect(result.steps[0].data).toMatchObject({ previousUrl: 'https://example.com/app?view=wrong', url: start.targetUrl, navigated: true });
   });
 
@@ -69,7 +105,7 @@ describe('Start always opens its configured URL', () => {
     const { start } = setup();
     const result = await runGraph([{ ...start, targetUrl: 'https://example.com/app?view={{view}}' }], [], { view: 'report' });
     expect(result.ok).toBe(true);
-    expect(navigateToStartUrl).toHaveBeenCalledWith(1, 'https://example.com/app?view=report', 30000, 'https://example.com/app?view=wrong');
+    expect(navigateToStartUrl).toHaveBeenCalledWith(1, 'https://example.com/app?view=report', 30000, 'https://example.com/app?view=wrong', expect.any(AbortSignal));
   });
 
   it('stops before any DOM operation when navigation fails', async () => {

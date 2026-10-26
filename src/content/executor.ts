@@ -1,4 +1,7 @@
 import type { EventDefinition, ExecutionVerification } from '@/types/workflow';
+import { replayDrag } from './drag';
+import { focusElement } from './focus';
+import { selectCombobox } from './combobox';
 
 export interface EventExecutionResult {
   output?: unknown;
@@ -16,7 +19,7 @@ function setNativeValue(element: HTMLInputElement | HTMLTextAreaElement, value: 
 }
 
 function clickAsUser(element: HTMLElement, detail = 1): void {
-  const mouse = { bubbles: true, cancelable: true, view: window, button: 0, buttons: 1, detail };
+  const mouse = { bubbles: true, cancelable: true, view: element.ownerDocument.defaultView, button: 0, buttons: 1, detail };
   element.dispatchEvent(new PointerEvent('pointerdown', { ...mouse, pointerId: 1, pointerType: 'mouse', isPrimary: true }));
   element.dispatchEvent(new MouseEvent('mousedown', mouse));
   element.focus({ preventScroll: true });
@@ -27,20 +30,29 @@ function clickAsUser(element: HTMLElement, detail = 1): void {
 
 const IMPLICIT_SUBMIT_INPUT_TYPES = new Set(['text', 'search', 'tel', 'url', 'email', 'password', 'date', 'month', 'week', 'time', 'datetime-local', 'number']);
 
-function pressKeyAsUser(element: HTMLElement, key: string): void {
+function pressKeyAsUser(element: HTMLElement, key: string, definition: EventDefinition): void {
   const form = element instanceof HTMLInputElement || element instanceof HTMLButtonElement
     ? element.form : element.closest('form');
   let submitted = false;
+  let activated = false;
+  const observeClick = () => { activated = true; };
+  element.addEventListener('click', observeClick, true);
+  const modifiers = definition.modifiers ?? {};
+  const init = { key, code: definition.code || (key === ' ' ? 'Space' : key), bubbles: true, cancelable: true, altKey: Boolean(modifiers.alt), ctrlKey: Boolean(modifiers.ctrl), metaKey: Boolean(modifiers.meta), shiftKey: Boolean(modifiers.shift) };
   const observeSubmit = () => { submitted = true; };
   form?.addEventListener('submit', observeSubmit, true);
   try {
     element.focus();
-    const keydownAllowed = element.dispatchEvent(new KeyboardEvent('keydown', { key, code: key, bubbles: true, cancelable: true }));
+    const keydownAllowed = element.dispatchEvent(new KeyboardEvent('keydown', init));
     const keypressAllowed = keydownAllowed
-      ? element.dispatchEvent(new KeyboardEvent('keypress', { key, code: key, bubbles: true, cancelable: true }))
+      ? element.dispatchEvent(new KeyboardEvent('keypress', init))
       : false;
-    element.dispatchEvent(new KeyboardEvent('keyup', { key, code: key, bubbles: true, cancelable: true }));
-    if (key !== 'Enter' || !keydownAllowed || !keypressAllowed || submitted || !element.isConnected) return;
+    const keyupAllowed = element.dispatchEvent(new KeyboardEvent('keyup', init));
+    if (!keydownAllowed || !keypressAllowed || submitted || activated || !element.isConnected || modifiers.alt || modifiers.ctrl || modifiers.meta) return;
+    if (key === ' ' && keyupAllowed && (element instanceof HTMLButtonElement || element instanceof HTMLInputElement && ['checkbox', 'radio', 'button', 'submit', 'reset'].includes(element.type))) {
+      element.click(); return;
+    }
+    if (key !== 'Enter') return;
     // Synthetic keyboard events do not perform native Enter activation/implicit submission.
     // Respect page handlers first, then provide only the missing browser default action.
     if (element instanceof HTMLButtonElement || (element instanceof HTMLInputElement && ['submit', 'image', 'button', 'reset'].includes(element.type))) {
@@ -57,6 +69,7 @@ function pressKeyAsUser(element: HTMLElement, key: string): void {
     }
   } finally {
     form?.removeEventListener('submit', observeSubmit, true);
+    element.removeEventListener('click', observeClick, true);
   }
 }
 
@@ -77,10 +90,12 @@ function eventName(event: EventDefinition): string | undefined {
   if (event.type === 'doubleClick') return 'dblclick';
   if (event.type === 'pressKey') return 'keydown';
   if (event.type === 'hover') return 'mouseover';
+  if (event.type === 'mouseLeave') return 'mouseout';
   if (event.type === 'scrollIntoView') return undefined;
   if (event.type === 'scrollPage') return 'scroll';
   if (event.type === 'contextMenu') return 'contextmenu';
   if (event.type === 'longPress') return 'pointerup';
+  if (event.type === 'drag') return 'pointerdown';
   if (event.type === 'custom') return event.customEvent?.trim();
   return event.type === 'check' || event.type === 'select' ? 'change' : event.type;
 }
@@ -95,10 +110,18 @@ async function settle(): Promise<void> {
 
 export async function executeEvent(element: HTMLElement, event: EventDefinition): Promise<EventExecutionResult> {
   if (!element.isConnected) throw new Error('目标节点已不在当前页面中');
-  element.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'center' });
-  const rect = element.getBoundingClientRect();
-  const style = getComputedStyle(element);
-  const userOperation = ['click', 'doubleClick', 'input', 'select', 'check', 'hover', 'focus', 'pressKey', 'submit', 'contextMenu', 'longPress'].includes(event.type);
+  if (event.type === 'select' && event.optionalValue && !event.value?.trim()) return {
+    output: { skipped: true }, verification: { ok: true, summary: '可选筛选值为空，保持控件不变并跳过选择' },
+  };
+  if (!['blur', 'focusout', 'mouseLeave'].includes(event.type)) element.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'center' });
+  const nativeCheck = event.type === 'check' && element instanceof HTMLInputElement && ['radio', 'checkbox'].includes(element.type);
+  const checkLabel = nativeCheck ? (element as HTMLInputElement).labels?.[0] : undefined;
+  // Design-system radios often make the native input transparent. Operate its
+  // visible associated label, while still verifying the actual input.checked.
+  const interactionTarget = nativeCheck && checkLabel && getComputedStyle(element).opacity === '0' ? checkLabel : element;
+  const rect = interactionTarget.getBoundingClientRect();
+  const style = getComputedStyle(interactionTarget);
+  const userOperation = ['click', 'doubleClick', 'input', 'select', 'check', 'hover', 'focus', 'focusin', 'pressKey', 'submit', 'reset', 'contextMenu', 'longPress', 'drag'].includes(event.type);
   if (userOperation && (rect.width <= 0 || rect.height <= 0 || style.display === 'none' || style.visibility === 'hidden' || style.pointerEvents === 'none' || Number(style.opacity) === 0)) {
     throw new Error('Selector 找到的节点当前不可见，无法按用户方式操作');
   }
@@ -106,18 +129,19 @@ export async function executeEvent(element: HTMLElement, event: EventDefinition)
     const centerX = Math.max(0, Math.min(innerWidth - 1, rect.left + rect.width / 2));
     const centerY = Math.max(0, Math.min(innerHeight - 1, rect.top + rect.height / 2));
     const topElement = document.elementFromPoint(centerX, centerY);
-    if (topElement && topElement !== element && !element.contains(topElement) && !topElement.contains(element)) {
+    if (topElement && topElement !== interactionTarget && !interactionTarget.contains(topElement) && !topElement.contains(interactionTarget)) {
       throw new Error(`目标节点被其他元素遮挡：${topElement.tagName.toLowerCase()}`);
     }
   }
   if (isDisabled(element) && ['click', 'doubleClick', 'input', 'select', 'check', 'pressKey', 'submit'].includes(event.type)) {
     throw new Error('目标节点当前处于禁用状态');
   }
+  if (event.type === 'select' && !(element instanceof HTMLSelectElement)) return selectCombobox(element, event, clickAsUser);
 
   const expectedEvent = eventName(event);
   let observed = false;
   let mutationCount = 0;
-  const observeEvent = () => { observed = true; };
+  const observeEvent = (native: Event) => { if (native.target === element || native.target instanceof Node && element.contains(native.target)) observed = true; };
   if (expectedEvent) document.addEventListener(expectedEvent, observeEvent, true);
   const observer = new MutationObserver((records) => { mutationCount += records.length; });
   observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true, characterData: true });
@@ -125,7 +149,15 @@ export async function executeEvent(element: HTMLElement, event: EventDefinition)
   try {
     let output: unknown;
     const inputEvidence: string[] = [];
+    let resetExpected: unknown;
+    let resetForm: HTMLFormElement | undefined;
+    const formValues = (form: HTMLFormElement) => [...form.elements].filter(el => el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement).map(el => {
+      if (el instanceof HTMLInputElement && el.type === 'password') return { passwordAtDefault: el.value === el.defaultValue };
+      if (el instanceof HTMLSelectElement && el.multiple) return [...el.selectedOptions].map(option => option.value);
+      return currentValue(el as HTMLElement);
+    });
     switch (event.type) {
+      case 'upload': throw new Error('上传文件需要通过工作流后台读取本机路径，不能直接在页面执行');
       case 'click':
         clickAsUser(element);
         output = 'clicked';
@@ -169,7 +201,7 @@ export async function executeEvent(element: HTMLElement, event: EventDefinition)
         dispatch(element, 'change');
         await settle();
         inputEvidence.push(`change 更新后：${String(currentValue(element) ?? '')}`);
-        element.blur();
+        if (!event.keepFocus) element.blur();
         output = value;
         break;
       }
@@ -189,21 +221,50 @@ export async function executeEvent(element: HTMLElement, event: EventDefinition)
           throw new Error('该节点不是勾选框或单选框');
         }
         const desired = event.value === undefined ? !element.checked : !['false', '0', '否', '取消'].includes(event.value);
-        if (element.checked !== desired) element.click();
+        if (element.checked !== desired) interactionTarget.click();
         dispatch(element, 'change');
         output = desired;
         break;
       }
       case 'hover':
-        element.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, view: window }));
-        element.dispatchEvent(new MouseEvent('mouseenter', { bubbles: false, view: window }));
+        element.dispatchEvent(new PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' }));
+        element.dispatchEvent(new PointerEvent('pointerenter', { bubbles: false, pointerType: 'mouse' }));
+        element.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, view: element.ownerDocument.defaultView }));
+        element.dispatchEvent(new MouseEvent('mouseenter', { bubbles: false, view: element.ownerDocument.defaultView }));
         output = 'hovered';
         break;
-      case 'focus': element.focus(); output = 'focused'; break;
-      case 'blur': element.blur(); output = 'blurred'; break;
+      case 'mouseLeave':
+        element.dispatchEvent(new PointerEvent('pointerout', { bubbles: true, pointerType: 'mouse' }));
+        element.dispatchEvent(new PointerEvent('pointerleave', { bubbles: false, pointerType: 'mouse' }));
+        element.dispatchEvent(new MouseEvent('mouseout', { bubbles: true, view: element.ownerDocument.defaultView }));
+        element.dispatchEvent(new MouseEvent('mouseleave', { bubbles: false, view: element.ownerDocument.defaultView }));
+        output = 'mouse left'; break;
+      case 'focus': case 'focusin': {
+        const receipt = focusElement(element);
+        inputEvidence.push(`网页焦点=${receipt.documentFocused}；原生 focusin=${receipt.nativeFocusIn}；补齐焦点事件=${receipt.repaired.join(',') || '无'}`);
+        output = 'focused'; break;
+      }
+      case 'blur': case 'focusout': {
+        if (document.activeElement === element && event.relatedSelector) {
+          let matches: Element[];
+          try { matches = [...document.querySelectorAll(event.relatedSelector)]; } catch { throw new Error('焦点转移目标 Selector 无效'); }
+          if (matches.length !== 1 || !(matches[0] instanceof HTMLElement) || matches[0] === element) throw new Error('焦点转移目标不唯一或不存在，请更新关联 Selector');
+          matches[0].focus();
+        } else element.blur();
+        output = 'blurred'; break;
+      }
+      case 'change': dispatch(element, 'change'); output = 'change notified'; break;
+      case 'reset': {
+        const form = element instanceof HTMLFormElement ? element : element.closest('form');
+        if (!form) throw new Error('没有找到需要重置的表单');
+        const clone = form.cloneNode(true) as HTMLFormElement;
+        HTMLFormElement.prototype.reset.call(clone);
+        resetExpected = formValues(clone); resetForm = form;
+        HTMLFormElement.prototype.reset.call(form); output = 'form reset'; break;
+      }
       case 'pressKey': {
-        const key = event.value || 'Enter';
-        pressKeyAsUser(element, key);
+        const key = ['Space', 'Spacebar'].includes(event.value ?? '') ? ' ' : event.value || 'Enter';
+        pressKeyAsUser(element, key, event);
         output = key;
         break;
       }
@@ -230,6 +291,10 @@ export async function executeEvent(element: HTMLElement, event: EventDefinition)
         element.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, view: window, button: 2, buttons: 2 }));
         output = 'context menu';
         break;
+      case 'drag': {
+        const result = await replayDrag(element, event.value);
+        return { output: result, verification: verification(result.moved, result.moved ? '拖拽后已检测到元素位置或拖放内容变化' : '拖拽事件已发送，但未检测到移动或拖放结果，操作失败', { dx: result.dx, dy: result.dy }, result, []) };
+      }
       case 'longPress': {
         const duration = Math.max(650, Math.min(5000, Number(event.value) || 650));
         const mouse = { bubbles: true, cancelable: true, view: window, button: 0, buttons: 1 };
@@ -275,11 +340,16 @@ export async function executeEvent(element: HTMLElement, event: EventDefinition)
       const ok = actual === expected;
       return { output, verification: verification(ok, ok ? `勾选状态已验证：${actual ? '已勾选' : '未勾选'}` : '勾选状态与预期不符', expected, actual, evidence) };
     }
-    if (event.type === 'focus' || event.type === 'blur') {
-      const expected = event.type === 'focus';
+    if (['focus', 'blur', 'focusin', 'focusout'].includes(event.type)) {
+      const expected = event.type === 'focus' || event.type === 'focusin';
       const actual = document.activeElement === element;
       const ok = actual === expected;
-      return { output, verification: verification(ok, ok ? `${event.type === 'focus' ? '聚焦' : '失焦'}状态已验证` : `${event.type === 'focus' ? '聚焦' : '失焦'}没有生效`, expected, actual, evidence) };
+      return { output, verification: verification(ok, ok ? `${expected ? '聚焦' : '失焦'}状态已验证` : `${expected ? '聚焦' : '失焦'}没有生效`, expected, actual, evidence) };
+    }
+    if (event.type === 'reset' && resetForm) {
+      const actual = formValues(resetForm);
+      const ok = observed && JSON.stringify(actual) === JSON.stringify(resetExpected);
+      return { output, verification: verification(ok, ok ? '表单已恢复默认值' : '表单未恢复默认值，可能被页面取消或重置后恢复', resetExpected, actual, evidence) };
     }
     if (event.type === 'scrollIntoView') {
       const rect = element.getBoundingClientRect();

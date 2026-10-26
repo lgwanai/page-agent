@@ -11,9 +11,63 @@ beforeEach(() => {
     return { verification: { ok: true, summary: 'clicked' } };
   });
 });
-afterEach(() => { document.body.innerHTML = ''; vi.restoreAllMocks(); vi.clearAllMocks(); });
+afterEach(() => { vi.useRealTimers(); document.body.innerHTML = ''; vi.restoreAllMocks(); vi.clearAllMocks(); });
 
 describe('calendar rules', () => {
+  it('synchronizes stale Aurora focusin before choosing a date', async () => {
+    vi.useFakeTimers();
+    document.body.innerHTML='<div class="aurora-picker"><div class="aurora-picker-input-active"><input id="date_range"></div></div><div id="calendar" class="aurora-picker-panel-layout"><div class="picker-header-view">2026年10月</div><table><tr><td class="aurora-picker-cell-disabled" title="2026-10-01">1</td></tr></table></div>';
+    const cell=document.querySelector('td')!;const input=document.querySelector('input')!;
+    input.addEventListener('focusin',()=>cell.classList.remove('aurora-picker-cell-disabled'));
+    cell.addEventListener('click',()=>{cell.setAttribute('aria-selected','true');input.value='2026-10-01';});
+    const result=selectCalendarDate('#calendar','2026-10-01');await vi.runAllTimersAsync();
+    expect((await result).verification.evidence).toContain('已同步 Aurora 日期输入框 focusin，重新检查日期可选状态');
+    expect(executeEvent).toHaveBeenCalledOnce();
+  });
+  it('refreshes a stale Aurora month via previous/next and verifies restoration', async () => {
+    vi.useFakeTimers();
+    document.body.innerHTML='<div id="calendar" class="aurora-picker-panel-layout"><div class="picker-header"><button id="previous" class="prev">‹</button><div class="picker-header-view">2026年10月</div><button id="next" class="next">›</button></div><table><tr><td class="aurora-picker-cell-disabled" title="2026-10-01">1</td></tr></table></div>';
+    const cell=document.querySelector('td')!;
+    document.querySelector('#previous')!.addEventListener('click',()=>{document.querySelector('.picker-header-view')!.textContent='2026年9月';});
+    document.querySelector('#next')!.addEventListener('click',()=>{document.querySelector('.picker-header-view')!.textContent='2026年10月';cell.classList.remove('aurora-picker-cell-disabled');});
+    cell.addEventListener('click',()=>cell.setAttribute('aria-selected','true'));
+    const result=selectCalendarDate('#calendar','2026-10-01');await vi.runAllTimersAsync();
+    expect((await result).verification.evidence).toContain('已校验恢复原年月，重新检查日期禁用状态');
+    expect(vi.mocked(executeEvent).mock.calls.map(([element])=>element.id||element.tagName)).toEqual(['previous','next','TD']);
+  });
+  it('still refuses a genuinely disabled Aurora date after waiting', async () => {
+    vi.useFakeTimers();
+    document.body.innerHTML='<div id="calendar" class="aurora-picker-panel-layout"><div class="picker-header-view">2026年10月</div><table><tr><td class="aurora-picker-cell-disabled" title="2026-10-01">1</td></tr></table></div>';
+    const rejected=expect(selectCalendarDate('#calendar','2026-10-01')).rejects.toThrow('被页面禁用');
+    await vi.runAllTimersAsync();await rejected;expect(executeEvent).not.toHaveBeenCalled();
+  });
+  it('waits for Aurora initialization without clicking a disabled date', async () => {
+    vi.useFakeTimers();
+    document.body.innerHTML = '<div id="calendar" class="aurora-picker-panel-layout"><div class="picker-header-view">2026年10月</div><table><tr><td class="aurora-picker-cell-disabled" title="2026-10-01">1</td></tr></table></div>';
+    const cell=document.querySelector('td')!;
+    cell.addEventListener('click',()=>cell.setAttribute('aria-selected','true'));
+    setTimeout(()=>cell.classList.remove('aurora-picker-cell-disabled'),500);
+    const result=selectCalendarDate('#calendar','2026-10-01');
+    await vi.runAllTimersAsync();
+    expect((await result).verification.ok).toBe(true);
+    expect(executeEvent).toHaveBeenCalledOnce();
+  });
+  it('reopens a stale focused Aurora picker once and verifies its month', async () => {
+    vi.useFakeTimers();
+    document.body.innerHTML = '<div class="aurora-picker"><input id="trigger"></div><div id="calendar" class="aurora-picker-panel-layout"><div class="picker-header-view">2026年10月</div><table><tr><td class="aurora-picker-cell-disabled" title="2026-10-01">1</td></tr></table></div>';
+    const input=document.querySelector<HTMLInputElement>('#trigger')!;input.focus();
+    const cell=document.querySelector('td')!;
+    input.addEventListener('click',()=>cell.classList.remove('aurora-picker-cell-disabled'));
+    cell.addEventListener('click',()=>{cell.setAttribute('aria-selected','true');input.value='2026-10-01';});
+    const result=selectCalendarDate('#calendar','2026-10-01');await vi.runAllTimersAsync();
+    expect((await result).verification.evidence).toContain('已确认重新打开后年月一致，重新检查日期状态');
+    expect(vi.mocked(executeEvent).mock.calls.map(([element])=>element.id||element.tagName)).toEqual(['trigger','TD']);
+  });
+  it('reports Aurora disabled dates without dispatching a click', async () => {
+    document.body.innerHTML = '<div id="calendar"><div class="aurora-picker-header-view">2026年10月</div><table><tr><td class="aurora-picker-cell aurora-picker-cell-disabled aurora-picker-cell-in-view" title="2026-10-01">1</td></tr></table></div>';
+    await expect(selectCalendarDate('#calendar', '2026-10-01')).rejects.toMatchObject({ message: expect.stringContaining('被页面禁用'), verification: { actual: 'disabled' } });
+    expect(executeEvent).not.toHaveBeenCalled();
+  });
   it('recognizes a zero-size positioning root with a visible calendar child', () => {
     document.body.innerHTML = '<div id="calendar"><table><tr><td>1</td></tr></table></div>';
     const root = document.querySelector<HTMLElement>('#calendar')!;
@@ -159,7 +213,7 @@ describe('calendar rules', () => {
   });
   it('rejects disabled dates and reversed ranges without clicks', async () => {
     document.body.innerHTML = '<div id="calendar"><div class="picker-header-view">2026年10月</div><table><tr><td title="2026-10-01" aria-disabled="true">1</td></tr></table></div>';
-    await expect(selectCalendarDate('#calendar', '2026-10-01')).rejects.toThrow('找不到可选日期');
+    await expect(selectCalendarDate('#calendar', '2026-10-01')).rejects.toThrow('被页面禁用');
     await expect(selectCalendarDate('#calendar', '2026-10-10', '2026-10-01')).rejects.toThrow('早于');
     expect(executeEvent).not.toHaveBeenCalled();
   });

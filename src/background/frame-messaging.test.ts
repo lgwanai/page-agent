@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { sendFrameMessage } from './frame-messaging';
+import { readyFrame, sendFrameMessage } from './frame-messaging';
 
 const action = { type: 'PAGE_AGENT_EXECUTE_EVENT', selector: '#datePeriod', event: { type: 'click' } };
 const frame = (frameId: number, url = 'https://example.com/form') => ({ frameId, url });
@@ -22,6 +22,30 @@ function setup(frames = [frame(0), frame(47)]) {
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 describe('workflow frame delivery', () => {
+  it('locates inside the guarded current document after its runtime processId changes', async () => {
+    const oldUrl = 'https://example.com/apply?activityId=123&processId=old';
+    const { execute } = setup([frame(0, 'https://example.com/apply?activityId=999&processId=new'), frame(47, oldUrl.replace('old', 'new'))]);
+    expect((await sendFrameMessage(1, 0, action, oldUrl, 0, ['activityId'])).frameId).toBe(47);
+    expect(execute).toHaveBeenCalledOnce();
+  });
+  it('preserves the actual missing loader error rather than misreporting selector absence', async () => {
+    vi.useFakeTimers();
+    const { send, inject, execute } = setup([frame(0)]);
+    send.mockRejectedValue(new Error('Receiving end does not exist'));
+    inject.mockRejectedValue(new Error('Could not load file: assets/old-loader.js'));
+    const pending = sendFrameMessage(1, 0, action, undefined, 250);
+    const assertion = expect(pending).rejects.toMatchObject({ diagnostic: { code: 'CONTENT_SCRIPT_UNAVAILABLE', sideEffects: 'none', context: { scriptFailures: { 0: expect.stringContaining('Could not load file') } } } });
+    await vi.runAllTimersAsync(); await assertion;
+    expect(execute).not.toHaveBeenCalled();
+  });
+  it('replaces an outdated listener before accepting its handshake', async () => {
+    const { send, inject } = setup([frame(0)]);
+    chrome.runtime.getManifest = () => ({ version: '0.10.48', content_scripts: [{ js: ['content-script.js'] }] }) as chrome.runtime.Manifest;
+    send.mockResolvedValueOnce({ ok: true, frameLocator: true, contentVersion: 'nodes-v0.10.47' } as never)
+      .mockResolvedValueOnce({ ok: true, frameLocator: true, contentVersion: 'nodes-v0.10.48' } as never);
+    expect(await readyFrame(1, 0)).toBe(true);
+    expect(inject).toHaveBeenCalledWith({ target: { tabId: 1, frameIds: [0] }, files: ['content-script.js'] });
+  });
   it('finds a selector inside a nested cross-origin iframe and executes there, not in its parents', async () => {
     const { execute } = setup([frame(0, 'https://parent.example/app'), frame(7, 'https://middle.example/frame'), frame(47, 'https://child.example/form')]);
     const result = await sendFrameMessage(1, 0, action);
@@ -181,4 +205,12 @@ describe('workflow frame delivery', () => {
     expect((await sendFrameMessage(1, 33, action)).frameId).toBe(47);
     expect(execute).toHaveBeenCalledOnce();
   });
+});
+
+it('does not trust a recycled recorded frame ID for semantic captures', async () => {
+  const { send, execute } = setup();
+  send.mockImplementation(async (_tabId, message) => message.type === 'PAGE_AGENT_LOCATE_SELECTOR' ? { ok: true, count: 1 } : { ok: true, frameLocator: true });
+  const targetHint = { tagName: 'button', locator: { version: 1 as const, selector: '#datePeriod', tagName: 'button', confidence: 'high' as const, candidates: [{ kind: 'id' as const, selector: '#datePeriod' }] } };
+  await expect(sendFrameMessage(1,47,{ ...action,targetHint },undefined,0)).rejects.toThrow('多个 frame');
+  expect(execute).not.toHaveBeenCalled();
 });

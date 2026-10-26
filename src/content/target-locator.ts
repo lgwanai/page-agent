@@ -1,3 +1,4 @@
+import { resolveLocator } from './locator-plan';
 import type { RecordedTargetHint } from '@/types/workflow';
 
 const IDENTITY_ATTRIBUTES = ['id', 'name', 'placeholder', 'aria-label', 'data-testid', 'data-test', 'data-qa'];
@@ -5,6 +6,9 @@ const normalizeText = (text: string) => text.replace(/\s+/g, ' ').trim();
 
 /** Recover recorded state-dependent selectors using stable, uniquely matched identity only. */
 export function locateEventTarget(selector: string, hint?: RecordedTargetHint): Element | null {
+  if (hint?.locator && hint.locator.selector !== selector) return locateEventTarget(selector);
+  if (hint?.frameName && hint.frameName !== window.name) return null;
+  if (hint?.locator?.version === 1 && hint.locator.selector === selector) return resolveLocator(hint.locator);
   const exact = [...document.querySelectorAll(selector)];
   if (!hint) {
     if (exact.length === 1) return exact[0];

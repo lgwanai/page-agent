@@ -5,6 +5,14 @@ import { locateEventTarget } from './target-locator';
 afterEach(() => { document.body.innerHTML = ''; });
 
 describe('recorded target recovery', () => {
+  it('recovers the manually captured signup button after the site changes its framework classes', () => {
+    document.body.innerHTML = '<button class="next-btn next-medium" type="button">查看已报记录</button><button class="next-btn next-medium" type="button">再次报名</button>';
+    const oldSelector = '#starb-container > div > div > div > div.wrapper--t48xv3sO > div.wrapper--QCAL3ghJ.availableBg--cvU7g00y > div:nth-child(2) > button.tbd-btn.tbd-btn-primary';
+    expect(locateEventTarget(oldSelector, { tagName: 'button', text: '再次报名', attributes: { type: 'button' } }))
+      .toBe(document.querySelectorAll('button')[1]);
+    document.body.insertAdjacentHTML('beforeend', '<button type="button">再次报名</button>');
+    expect(() => locateEventTarget(oldSelector, { tagName: 'button', text: '再次报名', attributes: { type: 'button' } })).toThrow('不唯一');
+  });
   it('does not accept a same-ID lookalike with different recorded identity', () => {
     document.body.innerHTML = '<input id="datePeriod" placeholder="其他日期" disabled>';
     expect(locateEventTarget('#datePeriod', { tagName: 'input', attributes: { id: 'datePeriod', placeholder: '开始日期' } })).toBeNull();

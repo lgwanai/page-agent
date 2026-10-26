@@ -1,13 +1,15 @@
+import { cancelExecution, executionStatus } from './execution-control';
 import type { RuntimeMessage } from '@/types/messages';
 import type { WorkflowNode } from '@/types/workflow';
-import { loadWorkspace, saveWorkspace } from '@/shared/storage';
+import { loadWorkspace, replaceWorkspace, renameWorkflow, deleteWorkflow, restoreWorkflow, updateWorkflowTags, purgeWorkflow } from '@/shared/storage';
 import { loadProvider, saveProvider } from '@/shared/provider-storage';
 import { testProvider } from './ai-provider';
 import { connectBridge, getMcpConnectionInfo, isBridgeConnected, retryMcpConnection } from './bridge';
 import { runAction, runGraph, runNodes, runScript } from './runner';
 import { sendSelectorToFrames } from './selector-messaging';
+import { selectedPageTarget } from './selection-target';
 import { acknowledgeRecording, appendRecordedEvent, getRecordingState, recordingForFrame, resumeRecordingOverlay, startPageRecording, stopPageRecording } from './recording';
-import { ensureWorkflowKeys } from '@/shared/workflow-keys';
+import { ensureWorkflowKeys, ensureWorkflowKey, rotateWorkflowKey } from '@/shared/workflow-keys';
 import { getInstanceId } from '@/shared/instance';
 import { saveMcpOptions } from '@/shared/mcp-config';
 
@@ -37,6 +39,7 @@ async function getActiveTab(): Promise<chrome.tabs.Tab> {
 
 async function sendAllFrames(message: RuntimeMessage): Promise<void> {
   const tab = await getActiveTab();
+  if (message.type === 'PAGE_AGENT_START_SELECT' && !/^https?:\/\//i.test(tab.url ?? '')) throw new Error(`Selector 需要在目标 http/https 网页上启动，当前页面是 ${tab.url ?? '未知网址'}；请切换回目标网页后再点击 Selector`);
   const frames = await chrome.webNavigation.getAllFrames({ tabId: tab.id! });
   if (message.type === 'PAGE_AGENT_START_SELECT' || message.type === 'PAGE_AGENT_STOP_SELECT') {
     const manifest = chrome.runtime.getManifest() as ReturnType<typeof chrome.runtime.getManifest> & {
@@ -58,6 +61,20 @@ async function sendAllFrames(message: RuntimeMessage): Promise<void> {
 }
 
 chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendResponse) => {
+  if (message.type === 'PAGE_AGENT_COMPONENT_VERSIONS') {
+    void getActiveTab().then(async tab => {
+      const frames = await chrome.webNavigation.getAllFrames({ tabId: tab.id! });
+      return Promise.all((frames ?? []).map(async frame => {
+        try {
+          const response = await Promise.race([chrome.tabs.sendMessage(tab.id!, { type: 'PAGE_AGENT_PING' }, { frameId: frame.frameId }), new Promise<never>((_, reject) => setTimeout(() => reject(new Error('握手超时')), 2000))]);
+          return { frameId: frame.frameId, version: response?.contentVersion };
+        } catch { return { frameId: frame.frameId, error: '页面脚本未连接，请刷新网页' }; }
+      }));
+    }).then(result => sendResponse({ ok: true, result })).catch((error: Error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+  if (message.type === 'PAGE_AGENT_EXECUTION_STATUS') { sendResponse({ ok: true, result: executionStatus() }); return false; }
+  if (message.type === 'PAGE_AGENT_CANCEL_RUN') { sendResponse({ ok: cancelExecution(message.runId) }); return false; }
   if (message.type === 'PAGE_AGENT_GET_MCP_INFO' || message.type === 'PAGE_AGENT_RECONNECT_MCP') {
     if (message.type === 'PAGE_AGENT_RECONNECT_MCP') retryMcpConnection();
     void getMcpConnectionInfo().then((result) => sendResponse({ ok: true, result }))
@@ -75,8 +92,7 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendRespo
     return true;
   }
   if (message.type === 'PAGE_AGENT_SELECTED') {
-    const frameId = sender.frameId ?? 0;
-    chrome.runtime.sendMessage({ type: 'PAGE_AGENT_SELECTION', target: { ...message.target, frameId, frameUrl: sender.url ?? message.target.frameUrl } }).catch(() => undefined);
+    chrome.runtime.sendMessage({ type: 'PAGE_AGENT_SELECTION', target: selectedPageTarget(message.target, sender) }).catch(() => undefined);
     void sendAllFrames({ type: 'PAGE_AGENT_STOP_SELECT' });
     sendResponse({ ok: true });
     return false;
@@ -85,6 +101,15 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendRespo
     void sendAllFrames(message)
       .then(() => sendResponse({ ok: true }))
       .catch((error: Error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+  if (message.type === 'PAGE_AGENT_PICK_SCREENSHOT_REGION') {
+    void getActiveTab().then(async (tab) => {
+      if (!/^https?:\/\//i.test(tab.url ?? '')) throw new Error('请切回目标网页后框选截图');
+      const { readyFrame } = await import('./frame-messaging');
+      if (!await readyFrame(tab.id!,0)) throw new Error('页面脚本未就绪，请刷新页面');
+      return chrome.tabs.sendMessage(tab.id!,message,{frameId:0});
+    }).then(sendResponse).catch((error:Error)=>sendResponse({ok:false,error:error.message}));
     return true;
   }
   if (message.type === 'PAGE_AGENT_START_RECORDING') {
@@ -127,29 +152,62 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendRespo
     return true;
   }
   if (message.type === 'PAGE_AGENT_SET_STATE') {
-    void saveWorkspace(message.state).then(() => sendResponse({ ok: true }))
+    void replaceWorkspace(message.state, message.expectedRevisions).then(async () => sendResponse({ ok: true, state: await loadWorkspace() }))
+      .catch((error: Error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+  if (message.type === 'PAGE_AGENT_WORKFLOW_KEY') {
+    void loadWorkspace().then(state => {
+      if (!state.scripts.some(item => item.id === message.workflowId)) throw new Error('工作流不存在');
+      return message.rotate ? rotateWorkflowKey(message.workflowId) : ensureWorkflowKey(message.workflowId);
+    }).then(result => sendResponse({ ok: true, result })).catch((error: Error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+  if ((message.type === 'PAGE_AGENT_PURGE_WORKFLOW' || message.type === 'PAGE_AGENT_DELETE_WORKFLOW') && executionStatus()) { sendResponse({ ok: false, error: '请先停止当前运行，再删除工作流' }); return false; }
+  if (message.type === 'PAGE_AGENT_PURGE_WORKFLOW') {
+    void purgeWorkflow(message.workflowId).then(() => sendResponse({ ok: true })).catch((error: Error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+  if (message.type === 'PAGE_AGENT_RESTORE_WORKFLOW' || message.type === 'PAGE_AGENT_TAG_WORKFLOW') {
+    void (message.type === 'PAGE_AGENT_RESTORE_WORKFLOW' ? restoreWorkflow(message.workflowId) : updateWorkflowTags(message.workflowId, message.tags, message.expectedUpdatedAt))
+      .then(() => sendResponse({ ok: true })).catch((error: Error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+  if (message.type === 'PAGE_AGENT_DELETE_WORKFLOW') {
+    void deleteWorkflow(message.workflowId, message.expectedUpdatedAt)
+      .then(async () => sendResponse({ ok: true, state: await loadWorkspace() }))
+      .catch((error: Error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+  if (message.type === 'PAGE_AGENT_RENAME_WORKFLOW') {
+    void renameWorkflow(message.workflowId, message.name, message.expectedUpdatedAt)
+      .then(result => sendResponse({ ok: true, result }))
       .catch((error: Error) => sendResponse({ ok: false, error: error.message }));
     return true;
   }
   if (message.type === 'PAGE_AGENT_RUN_NODES') {
-    void runNodes(message.nodes as WorkflowNode[]).then((result) => sendResponse({ ok: result.ok, result }));
+    void runNodes(message.nodes as WorkflowNode[]).then((result) => sendResponse({ ok: result.ok, result })).catch((error: Error) => sendResponse({ ok: false, error: error.message }));
     return true;
   }
   if (message.type === 'PAGE_AGENT_RUN_GRAPH') {
     const progress = message.runId ? (nodeId: string, phase: 'running' | 'completed', steps?: import('@/types/workflow').StepResult[]) => {
       void chrome.runtime.sendMessage({ type: 'PAGE_AGENT_RUN_PROGRESS', runId: message.runId, nodeId, phase, steps }).catch(() => undefined);
     } : undefined;
-    void runGraph(message.nodes as WorkflowNode[], message.edges, message.variables, progress)
+    void loadWorkspace().then(state => {
+      const workflow = message.workflowId ? state.scripts.find(item => item.id === message.workflowId) : undefined;
+      if (message.workflowId && !workflow) throw new Error('工作流已删除，请先恢复后再运行');
+      return runGraph(message.nodes as WorkflowNode[], message.edges, message.variables, progress, workflow ? { id: workflow.id, name: `${workflow.name}（画布调试）` } : undefined);
+    })
       .then((result) => sendResponse({ ok: result.ok, result }))
       .catch((error) => sendResponse({ ok: false, error: (error as Error).message }));
     return true;
   }
   if (message.type === 'PAGE_AGENT_RUN_SCRIPT') {
-    void runScript(message.scriptId, message.variables).then((result) => sendResponse({ ok: result.ok, result }));
+    void runScript(message.scriptId, message.variables).then((result) => sendResponse({ ok: result.ok, result })).catch((error: Error) => sendResponse({ ok: false, error: error.message }));
     return true;
   }
   if (message.type === 'PAGE_AGENT_RUN_ACTION') {
-    void runAction(message.actionId, message.variables).then((result) => sendResponse({ ok: result.ok, result }));
+    void runAction(message.actionId, message.variables).then((result) => sendResponse({ ok: result.ok, result })).catch((error: Error) => sendResponse({ ok: false, error: error.message }));
     return true;
   }
   if (message.type === 'PAGE_AGENT_GET_PROVIDER') {

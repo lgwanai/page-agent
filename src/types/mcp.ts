@@ -7,10 +7,15 @@ export interface McpClientOptions {
 }
 
 export interface McpConnectionInfo {
+  serverVersion?: string;
+  protocolVersion?: number;
   instanceId: string;
   connected: boolean;
   connecting: boolean;
   bridgeUrl: string;
   error?: string;
   clientOptions: McpClientOptions;
+  clientOptionsSource?: 'setup' | 'saved' | 'service' | 'unconfigured';
+  runningClientOptions?: McpClientOptions;
+  configurationMismatch?: boolean;
 }

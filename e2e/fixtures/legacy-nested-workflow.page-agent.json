@@ -1,0 +1,523 @@
+{
+  "$schema": "https://page-agent.dev/schemas/workflow-v1.json",
+  "schemaVersion": 1,
+  "kind": "page-agent-workflow",
+  "exportedAt": "2026-10-27T00:00:00.000Z",
+  "workflow": {
+    "id": "22222222-2222-4222-8222-222222222299",
+    "name": "Legacy nested layout regression",
+    "description": "Synthetic labels and configuration preserving only the legacy graph topology and positions. No business data.",
+    "createdAt": 1,
+    "updatedAt": 1,
+    "nodes": [
+      {
+        "id": "node-1",
+        "name": "布局节点 node-1",
+        "position": {
+          "x": 33919.64463857417,
+          "y": 33.0748295633544
+        },
+        "kind": "start",
+        "inputs": [],
+        "targetUrl": "https://example.invalid/practice",
+        "strictValidation": false,
+        "waitForLogin": false,
+        "keepCurrentPage": true,
+        "loadTimeoutMs": 30000,
+        "loginTimeoutMs": 300000,
+        "settleDelayMs": 0
+      },
+      {
+        "id": "node-2",
+        "name": "布局节点 node-2",
+        "position": {
+          "x": 35060,
+          "y": 80
+        },
+        "kind": "wait",
+        "durationMs": 0
+      },
+      {
+        "id": "node-3",
+        "name": "布局节点 node-3",
+        "position": {
+          "x": 34335.97658232306,
+          "y": 46.04528304812101
+        },
+        "kind": "wait",
+        "durationMs": 0
+      },
+      {
+        "id": "node-4",
+        "name": "布局节点 node-4",
+        "position": {
+          "x": 35447.377122456295,
+          "y": 115.59034961526413
+        },
+        "kind": "wait",
+        "durationMs": 0
+      },
+      {
+        "id": "node-5",
+        "name": "布局节点 node-5",
+        "position": {
+          "x": 35824.73981021856,
+          "y": 107.12757529847235
+        },
+        "kind": "wait",
+        "durationMs": 0
+      },
+      {
+        "id": "node-6",
+        "name": "布局节点 node-6",
+        "position": {
+          "x": 36200,
+          "y": 100
+        },
+        "kind": "wait",
+        "durationMs": 0
+      },
+      {
+        "id": "node-7",
+        "name": "布局节点 node-7",
+        "position": {
+          "x": 37140,
+          "y": 100
+        },
+        "kind": "wait",
+        "durationMs": 0
+      },
+      {
+        "id": "node-8",
+        "name": "布局节点 node-8",
+        "position": {
+          "x": 37500,
+          "y": 100
+        },
+        "kind": "wait",
+        "durationMs": 0
+      },
+      {
+        "id": "node-9",
+        "name": "布局节点 node-9",
+        "position": {
+          "x": 37860,
+          "y": 100
+        },
+        "kind": "wait",
+        "durationMs": 0
+      },
+      {
+        "id": "node-10",
+        "name": "布局节点 node-10",
+        "position": {
+          "x": 38580,
+          "y": 100
+        },
+        "kind": "pagination",
+        "body": {
+          "nodes": [
+            {
+              "id": "node-11",
+              "name": "布局节点 node-11",
+              "position": {
+                "x": 80,
+                "y": 100
+              },
+              "kind": "wait",
+              "durationMs": 0
+            },
+            {
+              "id": "node-12",
+              "name": "布局节点 node-12",
+              "position": {
+                "x": 420,
+                "y": 100
+              },
+              "kind": "wait",
+              "durationMs": 0
+            },
+            {
+              "id": "node-13",
+              "name": "布局节点 node-13",
+              "position": {
+                "x": 800,
+                "y": 100
+              },
+              "kind": "loop",
+              "body": {
+                "nodes": [
+                  {
+                    "id": "node-14",
+                    "name": "布局节点 node-14",
+                    "position": {
+                      "x": 80,
+                      "y": 100
+                    },
+                    "kind": "wait",
+                    "durationMs": 0
+                  }
+                ],
+                "edges": [],
+                "entryNodeId": "node-14"
+              },
+              "items": "[1]",
+              "itemVariable": "item",
+              "indexVariable": "index",
+              "maxIterations": 2
+            }
+          ],
+          "edges": [
+            {
+              "id": "edge-1-node-11",
+              "sourceNodeId": "node-11",
+              "sourcePort": "success",
+              "targetNodeId": "node-12"
+            },
+            {
+              "id": "edge-2-node-12",
+              "sourceNodeId": "node-12",
+              "sourcePort": "success",
+              "targetNodeId": "node-13"
+            }
+          ],
+          "entryNodeId": "node-11"
+        },
+        "target": {
+          "name": "分页控件",
+          "selector": "#pages",
+          "frameId": 0,
+          "frameUrl": "https://example.invalid/practice",
+          "tagName": "div",
+          "label": "分页"
+        },
+        "mode": "all",
+        "page": "1",
+        "pageVariable": "page",
+        "maxPages": 5,
+        "timeoutMs": 1000,
+        "settleMs": 0
+      },
+      {
+        "id": "node-15",
+        "name": "布局节点 node-15",
+        "position": {
+          "x": 40000,
+          "y": 100
+        },
+        "kind": "wait",
+        "durationMs": 0
+      },
+      {
+        "id": "node-16",
+        "name": "布局节点 node-16",
+        "position": {
+          "x": 42680,
+          "y": 20
+        },
+        "kind": "wait",
+        "durationMs": 0
+      },
+      {
+        "id": "node-17",
+        "name": "布局节点 node-17",
+        "position": {
+          "x": 40400,
+          "y": 360
+        },
+        "kind": "wait",
+        "durationMs": 0
+      },
+      {
+        "id": "node-18",
+        "name": "布局节点 node-18",
+        "position": {
+          "x": 36420,
+          "y": 100
+        },
+        "kind": "wait",
+        "durationMs": 0
+      },
+      {
+        "id": "node-19",
+        "name": "布局节点 node-19",
+        "position": {
+          "x": 36780,
+          "y": 100
+        },
+        "kind": "wait",
+        "durationMs": 0
+      },
+      {
+        "id": "node-20",
+        "name": "布局节点 node-20",
+        "position": {
+          "x": 40400,
+          "y": 100
+        },
+        "kind": "wait",
+        "durationMs": 0
+      },
+      {
+        "id": "node-21",
+        "name": "布局节点 node-21",
+        "position": {
+          "x": 40780,
+          "y": 100
+        },
+        "kind": "wait",
+        "durationMs": 0
+      },
+      {
+        "id": "node-22",
+        "name": "布局节点 node-22",
+        "position": {
+          "x": 41160,
+          "y": 360
+        },
+        "kind": "wait",
+        "durationMs": 0
+      },
+      {
+        "id": "node-23",
+        "name": "布局节点 node-23",
+        "position": {
+          "x": 38200,
+          "y": 100
+        },
+        "kind": "wait",
+        "durationMs": 0
+      },
+      {
+        "id": "node-24",
+        "name": "布局节点 node-24",
+        "position": {
+          "x": 41160,
+          "y": 100
+        },
+        "kind": "wait",
+        "durationMs": 0
+      },
+      {
+        "id": "node-25",
+        "name": "布局节点 node-25",
+        "position": {
+          "x": 41540,
+          "y": 100
+        },
+        "kind": "wait",
+        "durationMs": 0
+      },
+      {
+        "id": "node-26",
+        "name": "布局节点 node-26",
+        "position": {
+          "x": 41920,
+          "y": 100
+        },
+        "kind": "wait",
+        "durationMs": 0
+      },
+      {
+        "id": "node-27",
+        "name": "布局节点 node-27",
+        "position": {
+          "x": 42300,
+          "y": 100
+        },
+        "kind": "wait",
+        "durationMs": 0
+      },
+      {
+        "id": "node-28",
+        "name": "布局节点 node-28",
+        "position": {
+          "x": 42680,
+          "y": 420
+        },
+        "kind": "wait",
+        "durationMs": 0
+      },
+      {
+        "id": "node-29",
+        "name": "布局节点 node-29",
+        "position": {
+          "x": 41160,
+          "y": 100
+        },
+        "kind": "wait",
+        "durationMs": 0
+      }
+    ],
+    "edges": [
+      {
+        "id": "edge-1-node-1",
+        "sourceNodeId": "node-1",
+        "sourcePort": "success",
+        "targetNodeId": "node-3"
+      },
+      {
+        "id": "edge-2-node-3",
+        "sourceNodeId": "node-3",
+        "sourcePort": "success",
+        "targetNodeId": "node-2"
+      },
+      {
+        "id": "edge-3-node-2",
+        "sourceNodeId": "node-2",
+        "sourcePort": "success",
+        "targetNodeId": "node-4"
+      },
+      {
+        "id": "edge-4-node-4",
+        "sourceNodeId": "node-4",
+        "sourcePort": "success",
+        "targetNodeId": "node-5"
+      },
+      {
+        "id": "edge-5-node-5",
+        "sourceNodeId": "node-5",
+        "sourcePort": "success",
+        "targetNodeId": "node-6"
+      },
+      {
+        "id": "edge-6-node-7",
+        "sourceNodeId": "node-7",
+        "sourcePort": "success",
+        "targetNodeId": "node-8"
+      },
+      {
+        "id": "edge-7-node-8",
+        "sourceNodeId": "node-8",
+        "sourcePort": "success",
+        "targetNodeId": "node-9"
+      },
+      {
+        "id": "edge-8-node-10",
+        "sourceNodeId": "node-10",
+        "sourcePort": "done",
+        "targetNodeId": "node-15"
+      },
+      {
+        "id": "edge-9-node-15",
+        "sourceNodeId": "node-15",
+        "sourcePort": "failure",
+        "targetNodeId": "node-17"
+      },
+      {
+        "id": "edge-10-node-6",
+        "sourceNodeId": "node-6",
+        "sourcePort": "success",
+        "targetNodeId": "node-18"
+      },
+      {
+        "id": "edge-11-node-18",
+        "sourceNodeId": "node-18",
+        "sourcePort": "success",
+        "targetNodeId": "node-19"
+      },
+      {
+        "id": "edge-12-node-19",
+        "sourceNodeId": "node-19",
+        "sourcePort": "success",
+        "targetNodeId": "node-7"
+      },
+      {
+        "id": "edge-13-node-15",
+        "sourceNodeId": "node-15",
+        "sourcePort": "success",
+        "targetNodeId": "node-20"
+      },
+      {
+        "id": "edge-14-node-20",
+        "sourceNodeId": "node-20",
+        "sourcePort": "success",
+        "targetNodeId": "node-21"
+      },
+      {
+        "id": "edge-15-node-21",
+        "sourceNodeId": "node-21",
+        "sourcePort": "failure",
+        "targetNodeId": "node-22"
+      },
+      {
+        "id": "edge-16-node-9",
+        "sourceNodeId": "node-9",
+        "sourcePort": "success",
+        "targetNodeId": "node-23"
+      },
+      {
+        "id": "edge-17-node-23",
+        "sourceNodeId": "node-23",
+        "sourcePort": "success",
+        "targetNodeId": "node-10"
+      },
+      {
+        "id": "edge-18-node-23",
+        "sourceNodeId": "node-23",
+        "sourcePort": "failure",
+        "targetNodeId": "node-17"
+      },
+      {
+        "id": "edge-19-node-24",
+        "sourceNodeId": "node-24",
+        "sourcePort": "success",
+        "targetNodeId": "node-25"
+      },
+      {
+        "id": "edge-20-node-25",
+        "sourceNodeId": "node-25",
+        "sourcePort": "success",
+        "targetNodeId": "node-26"
+      },
+      {
+        "id": "edge-21-node-26",
+        "sourceNodeId": "node-26",
+        "sourcePort": "success",
+        "targetNodeId": "node-27"
+      },
+      {
+        "id": "edge-22-node-27",
+        "sourceNodeId": "node-27",
+        "sourcePort": "success",
+        "targetNodeId": "node-16"
+      },
+      {
+        "id": "edge-23-node-24",
+        "sourceNodeId": "node-24",
+        "sourcePort": "failure",
+        "targetNodeId": "node-28"
+      },
+      {
+        "id": "edge-24-node-25",
+        "sourceNodeId": "node-25",
+        "sourcePort": "failure",
+        "targetNodeId": "node-28"
+      },
+      {
+        "id": "edge-25-node-26",
+        "sourceNodeId": "node-26",
+        "sourcePort": "failure",
+        "targetNodeId": "node-28"
+      },
+      {
+        "id": "edge-26-node-27",
+        "sourceNodeId": "node-27",
+        "sourcePort": "failure",
+        "targetNodeId": "node-28"
+      },
+      {
+        "id": "edge-27-node-21",
+        "sourceNodeId": "node-21",
+        "sourcePort": "success",
+        "targetNodeId": "node-29"
+      },
+      {
+        "id": "edge-28-node-29",
+        "sourceNodeId": "node-29",
+        "sourcePort": "success",
+        "targetNodeId": "node-24"
+      }
+    ]
+  }
+}

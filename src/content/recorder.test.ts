@@ -15,6 +15,30 @@ afterEach(() => {
 });
 
 describe('search page recording', () => {
+  it('records a drag path once and suppresses the trailing click', () => {
+    document.body.innerHTML = '<div id="handle">drag</div>';
+    const source = document.querySelector<HTMLElement>('#handle')!;
+    const recorded = vi.fn(); startRecording(recorded, vi.fn(), false);
+    source.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0, clientX: 20, clientY: 20 }));
+    source.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientX: 70, clientY: 60 }));
+    source.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, clientX: 100, clientY: 90 }));
+    source.click();
+    expect(recorded).toHaveBeenCalledOnce();
+    expect(recorded.mock.calls[0][0].event.type).toBe('drag');
+    expect(JSON.parse(recorded.mock.calls[0][0].event.value)).toMatchObject({ dx: 80, dy: 70 });
+  });
+  it('keeps native HTML drag recording through pointercancel and dragend', () => {
+    document.body.innerHTML = '<div id="handle" draggable="true">drag</div>';
+    const source = document.querySelector<HTMLElement>('#handle')!;
+    const recorded = vi.fn(); startRecording(recorded, vi.fn(), false);
+    source.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0, clientX: 10, clientY: 10 }));
+    source.dispatchEvent(new MouseEvent('dragstart', { bubbles: true }));
+    source.dispatchEvent(new Event('pointercancel', { bubbles: true }));
+    source.dispatchEvent(new MouseEvent('dragover', { bubbles: true, clientX: 100, clientY: 100 }));
+    source.dispatchEvent(new MouseEvent('dragend', { bubbles: true, clientX: 100, clientY: 100 }));
+    expect(recorded).toHaveBeenCalledOnce();
+    expect(recorded.mock.calls[0][0].event.type).toBe('drag');
+  });
   it('restores the overlay after a SPA removes it and does not resurrect it after stop', async () => {
     startRecording(vi.fn(), vi.fn());
     document.querySelector('#__page_agent_recording__')!.remove();
@@ -152,4 +176,22 @@ describe('search page recording', () => {
     expect(events).toHaveLength(1);
     expect(isRecording()).toBe(false);
   });
+});
+
+it('records file selection as a required path parameter without fake paths or file contents', () => {
+  document.body.innerHTML = '<input type="file" id="document" name="document">';
+  const input = document.querySelector<HTMLInputElement>('input')!;
+  Object.defineProperty(input, 'files', { value: [new File(['PRIVATE-CONTENT'], 'private-report.pdf')] });
+  Object.defineProperty(input, 'value', { value: 'C:\\fakepath\\private-report.pdf' });
+  const recorded: RecordedPageEvent[] = [];
+  startRecording(event => recorded.push({ ...event, target: { ...event.target, frameId: 0 } }), vi.fn(), false);
+  input.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+  stopRecording();
+  const upload = recorded.find(record => record.event.type === 'upload');
+  expect(upload?.event.value).toBe('{{upload_document}}');
+  expect(recorded.some(record => record.event.type === 'click')).toBe(false);
+  const graph = recordingToGraph('https://example.com', 1, 2, recorded);
+  expect(graph.nodes[0]).toMatchObject({ inputs: [expect.objectContaining({ name: 'upload_document', required: true })] });
+  expect(JSON.stringify(graph)).not.toMatch(/fakepath|private-report|PRIVATE-CONTENT/);
 });

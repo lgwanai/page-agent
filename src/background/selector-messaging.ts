@@ -17,22 +17,26 @@ async function deliverToFrame(
   message: SelectorMessage,
   delivery: SelectorDelivery,
 ): Promise<boolean> {
+  const acknowledged = (response: unknown) => !!response && typeof response === 'object' && (response as { ok?: boolean }).ok === true;
   try {
-    await delivery.send(frameId, message);
-    return true;
+    if (acknowledged(await delivery.send(frameId, message))) return true;
   } catch {
     if (message.type === 'PAGE_AGENT_STOP_SELECT') return false;
   }
 
-  if (!delivery.contentScriptFiles.length) return false;
+  if (message.type === 'PAGE_AGENT_STOP_SELECT' || !delivery.contentScriptFiles.length) return false;
 
   try {
     await delivery.inject(frameId, delivery.contentScriptFiles);
-    await delivery.send(frameId, message);
-    return true;
-  } catch {
-    return false;
+  } catch (error) { throw new Error(`frame ${frameId} 脚本注入失败：${(error as Error).message}`); }
+  // CRX loader imports its module asynchronously: executeScript completing
+  // does not mean the message listener has been installed yet.
+  for (let attempt = 0; attempt < 20; attempt++) {
+    try { if (acknowledged(await delivery.send(frameId, message))) return true; }
+    catch { /* wait for the loader, inject only once */ }
+    if (attempt < 19) await new Promise((resolve) => setTimeout(resolve, 100));
   }
+  return false;
 }
 
 export async function sendSelectorToFrames(
@@ -41,11 +45,12 @@ export async function sendSelectorToFrames(
   delivery: SelectorDelivery,
 ): Promise<number> {
   const targets = frames.length ? frames : [{ frameId: 0 }];
-  const delivered = await Promise.all(targets.map(({ frameId }) => deliverToFrame(frameId, message, delivery)));
-  const count = delivered.filter(Boolean).length;
+  const delivered = await Promise.allSettled(targets.map(({ frameId }) => deliverToFrame(frameId, message, delivery)));
+  const count = delivered.filter((result) => result.status === 'fulfilled' && result.value).length;
 
   if (message.type === 'PAGE_AGENT_START_SELECT' && count === 0) {
-    throw new Error('无法在当前页面启动 Selector，请确认页面是可访问的 http/https 网页');
+    const failures = delivered.flatMap((result) => result.status === 'rejected' ? [String(result.reason?.message ?? result.reason)] : []);
+    throw new Error(`无法在当前页面启动 Selector：${failures.join('；') || '页面脚本未就绪或未返回确认'}。请刷新目标网页并确认已重新加载当前插件版本；若仍失败，请检查扩展站点访问权限。`);
   }
 
   return count;

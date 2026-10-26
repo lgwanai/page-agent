@@ -19,6 +19,75 @@ afterEach(() => {
   document.body.innerHTML = '';
   delete (document as Partial<Document>).elementFromPoint;
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
+
+describe('expanded semantic web events', () => {
+  it('checks a transparent design-system radio through its visible label and verifies input.checked', async () => {
+    const { field } = prepareField('<form><label><input id="query" type="radio" style="opacity:0"><span>选择</span></label></form>');
+    const label = field.closest('label')!;
+    label.style.opacity = '1'; field.style.opacity = '0';
+    vi.spyOn(label, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 100, 30));
+    document.elementFromPoint = vi.fn(() => label);
+    expect((await executeEvent(field, { type: 'check', value: 'true' })).verification).toMatchObject({ ok: true, actual: true });
+    expect((field as HTMLInputElement).checked).toBe(true);
+  });
+  it('replays focusin/focusout using native focus transitions without double firing handlers', async () => {
+    const { field } = prepareField('<form><input id="query"></form>');
+    const entered = vi.fn(), left = vi.fn(); field.addEventListener('focusin', entered); field.addEventListener('focusout', left);
+    expect((await executeEvent(field, { type: 'focusin' })).verification.ok).toBe(true);
+    await executeEvent(field, { type: 'focusin' });
+    expect((await executeEvent(field, { type: 'focusout' })).verification.ok).toBe(true);
+    await executeEvent(field, { type: 'focusout' });
+    expect(entered).toHaveBeenCalledOnce(); expect(left).toHaveBeenCalledOnce();
+  });
+  it('sends mouse and pointer enter/leave plus independent change notifications', async () => {
+    // jsdom rejects Vitest's Window proxy as UIEvent.view. Keep real DOM event
+    // dispatch/bubbling here; the test does not assert this browser-only field.
+    const NativeMouse = MouseEvent;
+    class TestMouse extends NativeMouse { constructor(type: string, init: MouseEventInit = {}) { super(type, { ...init, view: null }); } }
+    vi.stubGlobal('MouseEvent', TestMouse); vi.stubGlobal('PointerEvent', TestMouse);
+    const { field } = prepareField('<form><input id="query"></form>');
+    const seen: string[] = [];
+    for (const name of ['pointerover','pointerenter','mouseover','mouseenter','pointerout','pointerleave','mouseout','mouseleave','change']) field.addEventListener(name, () => seen.push(name));
+    await executeEvent(field, { type: 'hover' }); await executeEvent(field, { type: 'mouseLeave' }); await executeEvent(field, { type: 'change' });
+    expect(seen).toEqual(['pointerover','pointerenter','mouseover','mouseenter','pointerout','pointerleave','mouseout','mouseleave','change']);
+  });
+  it('defers recorded input blur and preserves the next target on the native focusout event', async () => {
+    const { field } = prepareField('<form><input id="query"><input id="next"></form>');
+    const next = document.querySelector<HTMLInputElement>('#next')!;
+    const related: EventTarget[] = []; field.addEventListener('focusout', event => related.push((event as FocusEvent).relatedTarget!));
+    await executeEvent(field, { type: 'input', value: 'abc', keepFocus: true });
+    expect(related).toHaveLength(0); expect(document.activeElement).toBe(field);
+    expect((await executeEvent(field, { type: 'focusout', relatedSelector: '#next' })).verification.ok).toBe(true);
+    expect(related).toEqual([next]); expect(document.activeElement).toBe(next);
+  });
+  it('retains modifiers and the physical code across keydown/keypress/keyup', async () => {
+    const { field } = prepareField('<form><input id="query"></form>');
+    const seen: KeyboardEvent[] = [];
+    for (const type of ['keydown','keypress','keyup']) field.addEventListener(type, event => seen.push(event as KeyboardEvent));
+    await executeEvent(field, { type: 'pressKey', value: 's', code: 'KeyS', modifiers: { ctrl: true, shift: true } });
+    expect(seen).toHaveLength(3);
+    expect(seen.every(event => event.ctrlKey && event.shiftKey && event.code === 'KeyS')).toBe(true);
+  });
+  it('supplies missing Space activation only once and respects prevention', async () => {
+    const { field } = prepareField('<form><input id="query" type="checkbox"></form>');
+    const clicked = vi.fn(); field.addEventListener('click', clicked);
+    await executeEvent(field, { type: 'pressKey', value: 'Space' });
+    expect((field as HTMLInputElement).checked).toBe(true); expect(clicked).toHaveBeenCalledOnce();
+    field.addEventListener('keydown', event => event.preventDefault());
+    await executeEvent(field, { type: 'pressKey', value: 'Space' });
+    expect(clicked).toHaveBeenCalledOnce();
+  });
+  it('verifies real reset values, not merely the arrival of a reset event', async () => {
+    const { field, form } = prepareField('<form id="query"><input value="default"><input type="checkbox"></form>');
+    const input = form.querySelector('input')!; input.value = 'changed';
+    expect((await executeEvent(field, { type: 'reset' })).verification.ok).toBe(true);
+    expect(input.value).toBe('default');
+    input.value = 'changed'; form.addEventListener('reset', event => event.preventDefault());
+    expect((await executeEvent(field, { type: 'reset' })).verification.ok).toBe(false);
+    expect(input.value).toBe('changed');
+  });
 });
 
 describe('recorded Enter replay', () => {

@@ -1,24 +1,48 @@
 {
   "manifest_version": 3,
   "name": "Page Agent",
-  "version": "0.10.15",
+  "version": "0.10.66",
   "description": "录制、编排并通过 MCP 安全调用历史网页工作流",
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' http://* https://* ws://127.0.0.1:17373"
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' http://*:* https://*:* ws://127.0.0.1:17373"
   },
-  "permissions": ["sidePanel", "storage", "scripting", "activeTab", "tabs", "webNavigation"],
-  "host_permissions": ["http://*/*", "https://*/*"],
-  "background": { "service_worker": "src/background/index.ts", "type": "module" },
-  "side_panel": { "default_path": "src/sidepanel/index.html" },
-  "action": { "default_title": "打开 Page Agent" },
+  "permissions": [
+    "sidePanel",
+    "storage",
+    "scripting",
+    "activeTab",
+    "tabs",
+    "webNavigation",
+    "debugger"
+  ],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "src/background/index.ts",
+    "type": "module"
+  },
+  "side_panel": {
+    "default_path": "src/sidepanel/index.html"
+  },
+  "action": {
+    "default_title": "打开 Page Agent"
+  },
   "content_scripts": [
     {
-      "matches": ["http://*/*", "https://*/*"],
-      "js": ["src/content/index.ts"],
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "src/content/index.ts"
+      ],
       "run_at": "document_start",
       "all_frames": true,
       "match_about_blank": true,
       "match_origin_as_fallback": true
     }
-  ]
+  ],
+  "minimum_chrome_version": "125"
 }

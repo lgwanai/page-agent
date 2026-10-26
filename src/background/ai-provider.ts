@@ -1,3 +1,4 @@
+import { executionSignal, checkCancellation } from './execution-control';
 import { loadProvider } from '@/shared/provider-storage';
 import type { AiInvocationInput, AiInvocationResult, AiProviderConfig } from '@/types/provider';
 
@@ -23,6 +24,7 @@ function parseJson(content: string): AiInvocationResult {
 async function requestCompletion(config: AiProviderConfig, apiKey: string, messages: Array<{ role: string; content: string }>): Promise<string> {
   if (!config.baseUrl || !config.model || !apiKey) throw new Error('AI Provider 未完整配置，请先填写 Base URL、Model 和 API Key');
   const request = (structured: boolean) => fetch(endpoint(config.baseUrl), {
+    signal: executionSignal(),
     method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({ model: config.model, temperature: config.temperature, ...(structured ? { response_format: { type: 'json_object' } } : {}), messages }),
   });
@@ -30,6 +32,7 @@ async function requestCompletion(config: AiProviderConfig, apiKey: string, messa
   let payload = await response.json().catch(() => ({})) as ChatCompletionResponse;
   // Some OpenAI-compatible gateways do not implement response_format yet.
   if (response.status === 400 && /response.?format|json.?mode/i.test(payload.error?.message ?? '')) {
+    checkCancellation();
     response = await request(false);
     payload = await response.json().catch(() => ({})) as ChatCompletionResponse;
   }

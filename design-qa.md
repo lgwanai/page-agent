@@ -1,54 +1,44 @@
-# Design QA — Canvas and Inspector Layout
+# Workflow library redesign QA
 
-- Source visual truth: `/var/folders/6g/cgfr4_bs02v24cwhmp8h3tfr0000gn/T/codex-clipboard-22a57e08-8658-4049-8013-cc9b7adfa635.png`
-- Implementation screenshot: `/Users/wuliang/workspace/page-agent/.planning/design-qa/layout-after.png`
-- Source pixels: 876 × 1510 at 1×
-- Implementation pixels: 1280 × 720 at 1×
-- CSS viewport: 1280 × 720
-- Density normalization: both captures evaluated at 1×; viewport dimensions differ because the in-app browser does not expose the original side-panel viewport size
-- State: compose mode, Start selected; inspector is floating over the lower-right of the canvas
+final result: passed
 
-## Full-view comparison evidence
+## Evidence and scope
 
-The source places a fixed-width property inspector beside a 559px-wide canvas, which permanently reduces the canvas viewport. The implementation keeps the canvas at full width and maximum available height, then floats a bounded inspector over its lower-right corner. The inspector no longer participates in layout, so opening or closing it never changes canvas dimensions.
+- Source visual truth: `/Users/wuliang/.codex/generated_images/01a0017a-1dd5-7ce0-80e1-f5f50e0c855a/exec-41bae8eb-9f6e-44e2-90c1-093192b77a71.png` (selected option 1).
+- User override: add an independent button that copies the complete workflow ID.
+- Implementation screenshot: `design-qa-list.png`.
+- Implementation: `http://127.0.0.1:5173/dev/workflow-list.html`, production WorkflowList/WorkflowRow components, sanitized development fixtures only. This page is not included in the extension build.
+- State: first workflow overflow menu open, eight workflows, light theme.
+- Source: 1089 × 1445 pixels, compared at approximately 2× density to 544 × 723 CSS pixels. Implementation: 544 × 742 full-page pixels, viewport 544 × 723, device density 1×. The small extra height is intentional for full UUID copy affordances rather than mock shorthand IDs.
+- Source and final browser capture opened together in the same comparison input. Full-view text and icons were legible; no additional focused crop needed.
 
-## Focused region comparison evidence
+## Findings and comparison history
 
-The canvas/inspector relationship was inspected separately because it is the changed interaction. Selecting Start opens the floating card without scrolling or resizing the canvas. The canvas remains visible to the left and above the card; closing it immediately reveals the covered region. The inspector header remains sticky while its content scrolls.
-
-## Findings
-
-- No actionable P0, P1, or P2 issues remain.
-- P3: the floating card is intentionally fixed to a maximum width of 420px; an optional future enhancement could make it draggable for unusually dense workflows.
+1. Initial capture: rows were too tall (88px minimum plus metadata), and the overflow menu was unnecessarily wide (190px). P2: reduced row minimum to 72px, vertical padding to 10px, and menu width to 168px. Recaptured and compared against source.
+2. Final comparison: grouped white list, horizontal dividers, purple primary Run, trailing overflow, and inline metadata match the selected hierarchy. No actionable P0/P1/P2 findings remain.
 
 ## Required fidelity surfaces
 
-- Fonts and typography: existing font stack, sizes, weights, truncation, and hierarchy are unchanged.
-- Spacing and layout rhythm: canvas occupies all available space; the inspector floats 12px from the lower-right edge with bounded width and height. The fixed footer remains visible.
-- Colors and visual tokens: existing neutral surfaces, purple accents, semantic port colors, borders, shadows, and radii are preserved.
-- Image quality and assets: no raster or brand assets were added, removed, stretched, or substituted.
-- Copy and content: all existing labels and help text are preserved.
+- Typography: existing system Chinese font fallback retained; 14px semibold workflow titles and smaller muted metadata preserve hierarchy. Full names wrap instead of being lost. Existing extension heading size retained intentionally.
+- Spacing/layout: compact shared list surface; rows reserve width only for Run and More. Copy-ID is inline with ID. Responsive 320px viewport has clientWidth = scrollWidth = 320; no horizontal overflow.
+- Tokens: existing purple, off-white, muted gray, light borders and rounded surfaces reused. Solid primary fill retained from extension rather than introducing new gradient tokens.
+- Assets: locally bundled Font Awesome vector icons, no new raster assets or custom drawn icons. Solid icons are an intentional user-approved library choice versus mock outline icons.
+- Content: actual workflow data retained. Development screenshot uses sanitized sample IDs and metadata; no real keys, Chrome storage, or business actions are accessed.
 
-## Primary interactions tested
+## Interactions verified
 
-- Enter compose mode.
-- Select the Start node.
-- Confirm the floating inspector opens without changing canvas dimensions or page scroll.
-- Collapse the inspector.
-
-## Comparison history
-
-- Initial issue: right inspector compressed the canvas and left a large blank vertical region.
-- Fix: full-width and maximum-height canvas, lower-right floating inspector, responsive bottom-sheet fallback on narrow panels, sticky inspector header.
-- Post-fix evidence: `.planning/design-qa/layout-after.png`; no remaining P0/P1/P2 findings.
+- Browser: first menu opens; four secondary actions visible; Escape closes it; ID-copy click displays success; console error log empty.
+- Unit tests: full UUID is passed to clipboard without invoking MCP or reading workflow keys; Escape restores trigger focus; existing edit/save/reopen and copy-Prompt cases pass.
+- Overflow menu supports arrow keys, Home/End, outside pointer close, and placement above the trigger near the viewport bottom.
 
 ## Implementation checklist
 
-- [x] Canvas uses the full available width.
-- [x] Property settings float over the canvas without affecting its layout.
-- [x] Canvas height consumes the maximum available viewport space.
-- [x] Inspector is bounded and internally scrollable.
-- [x] Selected-node settings open without moving the page.
-- [x] Inspector remains collapsible.
+- [x] Selected list hierarchy implemented.
+- [x] Complete workflow ID copy separate from key/Prompt copy.
+- [x] Existing callbacks retained.
+- [x] Browser-rendered comparison and narrow viewport check.
+- [x] Version synchronized to 0.10.33 before production build.
 
-final result: passed
+## Follow-up polish
+
+No blocking findings. Real installed-extension smoke check after Chrome reload remains a user deployment step; browser QA reused the actual list component without production credentials.

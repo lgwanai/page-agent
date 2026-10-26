@@ -1,0 +1,100 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1060" viewBox="0 0 1600 1060" role="img" aria-labelledby="title desc">
+  <title id="title">Page Agent 系统架构与数据边界</title>
+  <desc id="desc">受管终端内多个 MCP 客户端通过独立 stdio 适配进程连接共享本机 broker，再路由至 Chrome 插件后台。侧栏、后台、页面脚本与 Chrome 存储位于浏览器配置文件内。客户端模型、可选 AI Provider 和业务系统为三条独立外发路径。</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#53677d"/></marker>
+    <marker id="out" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="#ad6d28"/></marker>
+    <style>
+      text{font-family:"PingFang SC","Microsoft YaHei","Noto Sans CJK SC",Arial,sans-serif;fill:#1c3046}
+      .heading{font-size:32px;font-weight:600}.sub{font-size:16px;fill:#63758a}.zone{font-size:19px;font-weight:600}.name{font-size:22px;font-weight:600}.body{font-size:17px;fill:#52657b}.label{font-size:15px;fill:#52657b}.small{font-size:15px;fill:#63758a}
+      .card{fill:#fff;stroke:#c6d3e2;stroke-width:1.5}.flow{fill:none;stroke:#53677d;stroke-width:2;marker-end:url(#arrow)}.external{fill:none;stroke:#ad6d28;stroke-width:2;stroke-dasharray:7 5;marker-end:url(#out)}.tag{fill:#e9eff8}
+    </style>
+  </defs>
+  <rect width="1600" height="1060" fill="#fff"/>
+  <rect x="40" y="38" width="5" height="64" rx="2" fill="#315e9b"/>
+  <text class="heading" x="65" y="65">Page Agent｜系统架构与数据边界</text>
+  <text class="sub" x="65" y="95">部署视图 · 多客户端接入 · 明确实例路由 · 三条独立数据外发路径</text>
+  <text class="small" x="1540" y="62" text-anchor="end">EXT 0.10.18 / MCP 0.10.0</text>
+
+  <rect x="40" y="145" width="1000" height="785" rx="18" fill="#f5f8fc" stroke="#c6d3e2" stroke-width="1.5"/>
+  <text class="zone" x="65" y="177">受管用户终端 / 本机执行边界</text>
+  <rect x="1080" y="145" width="480" height="785" rx="18" fill="#fcfaf7" stroke="#d8cbb9" stroke-width="1.5" stroke-dasharray="7 5"/>
+  <text class="zone" x="1105" y="177">独立服务 / 需另行审核的数据接收方</text>
+
+  <rect class="card" x="80" y="240" width="250" height="125" rx="10"/>
+  <rect class="tag" x="96" y="252" width="71" height="25" rx="5"/><text class="label" x="107" y="270">调用侧</text>
+  <text class="name" x="100" y="305">MCP 客户端 A…N</text>
+  <text class="body" x="100" y="339">Agent / 开发工具 / 助手</text>
+  <rect class="card" x="380" y="240" width="280" height="125" rx="10"/>
+  <rect class="tag" x="396" y="252" width="99" height="25" rx="5"/><text class="label" x="407" y="270">每客户端独立</text>
+  <text class="name" x="400" y="305">Node MCP 适配进程</text>
+  <text class="body" x="400" y="339">SDK · 参数校验 · SharedBridge</text>
+  <rect class="card" x="720" y="240" width="280" height="125" rx="10"/>
+  <rect class="tag" x="736" y="252" width="100" height="25" rx="5"/><text class="label" x="747" y="270">本机共享服务</text>
+  <text class="name" x="740" y="305">WebSocket Broker</text>
+  <text class="body" x="740" y="339">实例注册 · 路由 · 执行互斥</text>
+  <path class="flow" d="M330 303H380"/><text class="label" x="355" y="229" text-anchor="middle">stdio</text>
+  <path class="flow" d="M660 303H720"/><text class="label" x="690" y="229" text-anchor="middle">本机 WS</text>
+  <text class="small" x="859" y="394" text-anchor="middle">127.0.0.1:17373</text>
+
+  <rect x="80" y="440" width="920" height="420" rx="14" fill="#edf3fc" stroke="#a9bfdc" stroke-width="1.5"/>
+  <text class="zone" x="105" y="473">Chrome 配置文件｜独立 instanceId</text>
+  <text class="small" x="973" y="473" text-anchor="end">同一 profile 多窗口共享身份</text>
+  <rect class="card" x="110" y="515" width="220" height="155" rx="10"/>
+  <text class="name" x="130" y="548">Side Panel</text>
+  <text class="body" x="130" y="579">React + FlowGram</text>
+  <text class="body" x="130" y="609">工作流列表 / 画布</text>
+  <text class="body" x="130" y="639">属性 / 参数 / 节点日志</text>
+  <rect class="card" x="380" y="515" width="300" height="155" rx="10"/>
+  <text class="name" x="400" y="548">扩展 Service Worker</text>
+  <text class="body" x="400" y="579">编排接口 / 工作流运行时</text>
+  <text class="body" x="400" y="609">录制协调 / 截图 / AI 调用</text>
+  <text class="body" x="400" y="639">key 校验 / Chrome API</text>
+  <rect class="card" x="730" y="515" width="240" height="155" rx="10"/>
+  <text class="name" x="750" y="548">Content Scripts</text>
+  <text class="body" x="750" y="579">主文档 + 当前 iframe</text>
+  <text class="body" x="750" y="609">DOM 交互 / 查询 / 日历</text>
+  <text class="body" x="750" y="639">定位 / 录制 / 页面检查</text>
+  <path class="flow" d="M330 590H380"/>
+  <text class="label" x="355" y="502" text-anchor="middle">runtime</text>
+  <path class="flow" d="M680 590H730"/>
+  <text class="label" x="705" y="502" text-anchor="middle">frame 消息</text>
+  <path class="flow" d="M860 365V417H530V515"/>
+  <rect x="638" y="406" width="141" height="22" fill="#f5f8fc"/><text class="label" x="649" y="422">WS /extension</text>
+
+  <rect class="card" x="380" y="745" width="300" height="83" rx="10"/>
+  <text class="name" x="400" y="777">Chrome 扩展存储</text>
+  <text class="body" x="400" y="808">local 持久库 / session 会话数据</text>
+  <path class="flow" d="M530 670V745"/>
+  <text class="label" x="543" y="728">定义 · key · 参数历史 · 调试</text>
+  <text class="small" x="110" y="783">复用当前用户登录态</text>
+  <text class="small" x="110" y="810">并继承其业务权限</text>
+
+  <rect class="card" x="1110" y="240" width="420" height="125" rx="10"/>
+  <text class="name" x="1130" y="281">MCP 客户端模型 / 云端</text>
+  <text class="body" x="1130" y="313">工具结果、截图与日志的后续处理</text>
+  <text class="body" x="1130" y="341">由客户端配置与供应商策略决定</text>
+  <path class="external" d="M205 240V205H1320V240"/>
+  <rect x="480" y="192" width="350" height="24" fill="#f5f8fc"/><text class="label" x="490" y="209">① 客户端自身数据链路（非插件控制）</text>
+
+  <rect class="card" x="1110" y="515" width="420" height="155" rx="10"/>
+  <text class="name" x="1130" y="553">AI Provider / 企业模型网关</text>
+  <text class="body" x="1130" y="587">OpenAI-compatible Chat Completions</text>
+  <text class="body" x="1130" y="619">指令 + 具名输入 + Bearer API Key</text>
+  <text class="body" x="1130" y="651">仅 AI 节点 / Provider 测试调用</text>
+  <path class="external" d="M650 670V698H1055V590H1110"/>
+  <rect x="751" y="687" width="272" height="23" fill="#f5f8fc"/><text class="label" x="761" y="704">② 配置的 HTTP(S) 模型接口</text>
+
+  <rect class="card" x="1110" y="745" width="420" height="115" rx="10"/>
+  <text class="name" x="1130" y="783">企业 / 第三方业务系统</text>
+  <text class="body" x="1130" y="816">页面自身的业务请求与登录会话</text>
+  <text class="body" x="1130" y="844">业务权限、结果与幂等由目标系统决定</text>
+  <path class="external" d="M970 627H1023V801H1110"/>
+  <text class="label" x="1089" y="892" text-anchor="end">③ 网站自身请求</text>
+
+  <text class="small" x="65" y="903">当前边界：本地优先 ≠ 全部数据不外发；loopback 与 instanceId ≠ 完整调用方认证。</text>
+  <path d="M65 970H110" stroke="#53677d" stroke-width="2" marker-end="url(#arrow)"/><text class="label" x="125" y="976">内部调用 / 本机通信</text>
+  <path d="M405 970H450" stroke="#ad6d28" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#out)"/><text class="label" x="465" y="976">独立服务数据链路</text>
+  <text class="small" x="1540" y="976" text-anchor="end">逻辑部署视图；不表示所有工具均已统一鉴权</text>
+  <text class="small" x="65" y="1013">数据范围、鉴权缺口及上线要求，请结合 data-security.md 阅读。</text>
+</svg>

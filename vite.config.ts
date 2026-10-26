@@ -10,8 +10,8 @@ export default defineConfig({
   // recover filesystem paths from an extension URL at runtime.
   define: {
     __PAGE_AGENT_LOCAL_MCP__: JSON.stringify({
-      command: process.execPath,
-      serverPath: fileURLToPath(new URL('./mcp-server/dist/index.js', import.meta.url)),
+      command: process.env.PAGE_AGENT_PORTABLE === '1' ? 'node' : process.execPath,
+      serverPath: process.env.PAGE_AGENT_PORTABLE === '1' ? '' : fileURLToPath(new URL('./mcp-server/dist/index.js', import.meta.url)),
     }),
   },
   resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },

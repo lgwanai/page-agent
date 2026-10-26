@@ -1,0 +1,142 @@
+{
+  "$schema": "https://page-agent.dev/schemas/workflow-v1.json",
+  "schemaVersion": 1,
+  "kind": "page-agent-workflow",
+  "exportedAt": "2026-10-27T00:00:00.000Z",
+  "workflow": {
+    "id": "22222222-2222-4222-8222-222222222203",
+    "name": "手册练习：对象列表循环",
+    "description": "仅更改练习页显示，输出保留最后一项结果，不自动汇总。",
+    "nodes": [
+      {
+        "id": "start",
+        "kind": "start",
+        "name": "开始",
+        "inputs": [
+          {
+            "id": "records",
+            "name": "记录",
+            "type": "objectArray",
+            "required": true,
+            "description": "例如 [{\"姓名\":\"张三\"},{\"姓名\":\"李四\"}]，不超过 10 项"
+          }
+        ],
+        "targetUrl": "http://127.0.0.1:4180/examples/practice.html",
+        "keepCurrentPage": false,
+        "strictValidation": false,
+        "waitForLogin": false,
+        "loadTimeoutMs": 30000,
+        "loginTimeoutMs": 300000,
+        "settleDelayMs": 100,
+        "position": {
+          "x": 80,
+          "y": 140
+        }
+      },
+      {
+        "id": "loop",
+        "kind": "loop",
+        "name": "遍历姓名",
+        "items": "{{记录}}",
+        "itemVariable": "当前项",
+        "indexVariable": "索引",
+        "maxIterations": 10,
+        "body": {
+          "entryNodeId": "each-fill",
+          "nodes": [
+            {
+              "id": "each-fill",
+              "kind": "dom",
+              "name": "逐项填写",
+              "target": {
+                "name": "逐项填写",
+                "selector": "#name",
+                "frameId": 0,
+                "frameUrl": "http://127.0.0.1:4180/examples/practice.html",
+                "tagName": "input",
+                "label": "逐项填写"
+              },
+              "event": {
+                "type": "input",
+                "value": "{{当前项.姓名}}"
+              },
+              "position": {
+                "x": 160,
+                "y": 80
+              }
+            },
+            {
+              "id": "each-click",
+              "kind": "dom",
+              "name": "逐项问候",
+              "target": {
+                "name": "逐项问候",
+                "selector": "#greet",
+                "frameId": 0,
+                "frameUrl": "http://127.0.0.1:4180/examples/practice.html",
+                "tagName": "button",
+                "label": "逐项问候"
+              },
+              "event": {
+                "type": "click"
+              },
+              "position": {
+                "x": 480,
+                "y": 80
+              }
+            },
+            {
+              "id": "each-output",
+              "kind": "output",
+              "name": "循环结果",
+              "source": "dom",
+              "target": {
+                "name": "显示结果",
+                "selector": "#result",
+                "frameId": 0,
+                "frameUrl": "http://127.0.0.1:4180/examples/practice.html",
+                "tagName": "output",
+                "label": "显示结果"
+              },
+              "read": "text",
+              "multiple": false,
+              "outcome": "success",
+              "position": {
+                "x": 800,
+                "y": 80
+              }
+            }
+          ],
+          "edges": [
+            {
+              "id": "edge-0",
+              "sourceNodeId": "each-fill",
+              "sourcePort": "success",
+              "targetNodeId": "each-click"
+            },
+            {
+              "id": "edge-1",
+              "sourceNodeId": "each-click",
+              "sourcePort": "success",
+              "targetNodeId": "each-output"
+            }
+          ]
+        },
+        "position": {
+          "x": 700,
+          "y": 140
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "edge-0",
+        "sourceNodeId": "start",
+        "sourcePort": "success",
+        "targetNodeId": "loop"
+      }
+    ],
+    "createdAt": 1793059200000,
+    "updatedAt": 1793059200000
+  }
+}

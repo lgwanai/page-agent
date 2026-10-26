@@ -2,7 +2,7 @@
 
 节点类型为 `calendar`，无需 AI。先添加点击日期输入框的网页节点，打开日历弹层；随后添加日历节点，选择弹出的容器（支持 iframe），填写日期。
 
-配置：`target` 与其他 DOM 节点相同；`mode` 为 `single` 或 `range`；`date` 为目标/开始日期；`endDate` 为区间结束日期。日期格式 `YYYY-MM-DD`，支持 `{{start_time}}`、`{{end_time}}` 等表达式。
+配置：`target` 与其他 DOM 节点相同；`mode` 为 `single` 或 `range`；`date` 为目标/开始日期；`endDate` 为区间结束日期。日期格式 `YYYY-MM-DD`，日期时间配置见 [日期时间节点](calendar-datetime.md)，支持 `{{start_time}}`、`{{end_time}}` 等表达式。
 
 单日期模式也可操作区间控件的一端；若控件要求分别打开开始与结束弹层，可用两个“点击输入框 → 日历选择器”组合。区间模式在同一弹层依次选择开始和结束日期。
 

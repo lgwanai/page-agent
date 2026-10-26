@@ -7,6 +7,7 @@ type Instance = { instanceId: string; version: string; connectedAt: string };
 export class SharedBridge {
   private socket?: WebSocket;
   private known: Instance[] = [];
+  private capabilities: string[] = [];
   private readonly pending = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }>();
   constructor(private readonly port: number) {}
   get instances(): Instance[] { return this.known; }
@@ -19,7 +20,7 @@ export class SharedBridge {
       if ((error as NodeJS.ErrnoException).code !== 'ECONNREFUSED' || !startBroker) throw error;
     }
     const child = spawn(process.execPath, [fileURLToPath(new URL('./broker.js', import.meta.url))], {
-      detached: true, stdio: 'ignore', env: { ...process.env, PAGE_AGENT_BRIDGE_PORT: String(this.port) },
+      detached: true, windowsHide: true, stdio: 'ignore', env: { ...process.env, PAGE_AGENT_BRIDGE_PORT: String(this.port) },
     });
     const spawnError = new Promise<never>((_, reject) => child.once('error', reject));
     child.unref();
@@ -29,7 +30,7 @@ export class SharedBridge {
         try { await this.open(); return; }
         catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ECONNREFUSED') throw error; }
       }
-      throw new Error('无法启动本机共享 MCP 桥接服务');
+      throw new Error(`无法启动本机共享 MCP 桥接服务（系统 ${process.platform}，Node ${process.execPath}，端口 ${this.port}）。请确认 broker.js 与 index.js 同目录，使用受支持的 Node，并检查端口占用及安全软件是否阻止 Node 本机连接。`);
     })()]);
   }
 
@@ -45,10 +46,10 @@ export class SharedBridge {
         if (this.socket === socket) { this.socket = undefined; this.known = []; this.rejectPending(); }
       });
       socket.on('message', (raw) => {
-        let message: { type?: string; protocol?: number; instances?: Instance[]; id?: string; ok?: boolean; result?: unknown; error?: string };
+        let message: { type?: string; protocol?: number; capabilities?: string[]; instances?: Instance[]; id?: string; ok?: boolean; result?: unknown; error?: string; diagnostic?: unknown };
         try { message = JSON.parse(String(raw)); } catch { return; }
         if (message.type === 'broker_ready' && message.protocol === 1) {
-          clearTimeout(timer); ready = true; this.socket = socket; this.known = message.instances ?? []; resolve(); return;
+          clearTimeout(timer); ready = true; this.socket = socket; this.known = message.instances ?? []; this.capabilities = message.capabilities ?? []; resolve(); return;
         }
         if (!ready) return;
         if (message.type === 'instances') { this.known = message.instances ?? []; return; }
@@ -56,7 +57,7 @@ export class SharedBridge {
         const pending = this.pending.get(message.id);
         if (!pending) return;
         clearTimeout(pending.timer); this.pending.delete(message.id);
-        if (message.ok) pending.resolve(message.result); else pending.reject(new Error(message.error ?? 'MCP 桥接失败'));
+        if (message.ok) pending.resolve(message.result); else pending.reject(Object.assign(new Error(message.error ?? 'MCP 桥接失败'), { diagnostic: message.diagnostic }));
       });
     });
   }
@@ -66,6 +67,8 @@ export class SharedBridge {
     this.pending.clear();
   }
   request(instanceId: string, method: string, params: Record<string, unknown> = {}, timeoutMs = 120_000): Promise<unknown> {
+    if (method === 'capture_screenshot' && !this.capabilities.includes('page_screenshot_v1')) return Promise.reject(new Error('当前共享桥接是旧版本，尚不支持截图。请停止旧 Page Agent broker 后重新连接 MCP，以加载 v0.10.0。'));
+    if (['create_workflow', 'get_workflow', 'edit_workflow', 'delete_node', 'export_workflow', 'import_workflow', 'inspect_page', 'debug_node', 'debug_workflow', 'get_debug_result', 'validate_workflow'].includes(method) && !this.capabilities.includes('workflow_authoring_v1')) return Promise.reject(new Error('当前共享桥接仍是旧版本。请停止旧 Page Agent broker 后重连 MCP 客户端，以加载 v0.9.0；现有执行工具仍可使用。'));
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return Promise.reject(new Error('共享 MCP 桥接未连接，请重新连接此工具'));
     const socket = this.socket;
     const id = randomUUID();

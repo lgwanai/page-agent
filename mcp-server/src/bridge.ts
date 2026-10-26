@@ -1,6 +1,11 @@
+import { inspectUploadFiles } from './upload.js';
+import { readFileSync } from 'node:fs';
+const serverVersion = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version as string;
 import { WebSocketServer, WebSocket } from 'ws';
 import { randomUUID } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import type { AddressInfo } from 'node:net';
+import { deliverEmail } from './email.js';
 
 interface PendingRequest {
   resolve: (value: unknown) => void;
@@ -10,6 +15,7 @@ interface PendingRequest {
 }
 
 interface BridgeResponse {
+  diagnostic?: unknown;
   id?: string;
   ok?: boolean;
   result?: unknown;
@@ -44,7 +50,7 @@ export class ExtensionBridge {
     this.server.on('connection', (socket, request) => {
       if (request.url === '/mcp-client' && !request.headers.origin) {
         this.relays.add(socket);
-        socket.send(JSON.stringify({ type: 'broker_ready', protocol: 1, instances: this.instances }));
+        socket.send(JSON.stringify({ type: 'broker_ready', protocol: 1, capabilities: ['workflow_authoring_v1', 'page_screenshot_v1'], instances: this.instances }));
         socket.on('error', () => undefined);
         socket.on('close', () => this.relays.delete(socket));
         socket.on('message', (raw) => { void this.relayRequest(socket, String(raw)); });
@@ -80,10 +86,10 @@ export class ExtensionBridge {
     let message: { id?: string; instanceId?: string; method?: string; params?: Record<string, unknown>; timeoutMs?: number };
     try { message = JSON.parse(raw); } catch { return; }
     if (!message || typeof message.id !== 'string') return;
-    const allowed = ['active_page', 'get_state', 'list_scripts', 'list_workflows', 'list_actions', 'run_script', 'run_workflow', 'run_action'];
+    const allowed = ['active_page', 'get_state', 'list_scripts', 'list_workflows', 'list_actions', 'run_script', 'run_workflow', 'run_action', 'create_workflow', 'get_workflow', 'edit_workflow', 'delete_node', 'export_workflow', 'import_workflow', 'inspect_page', 'debug_node', 'debug_workflow', 'get_debug_result', 'validate_workflow', 'capture_screenshot'];
     const instanceId = String(message.instanceId ?? '');
     const method = String(message.method ?? '');
-    const run = method.startsWith('run_');
+    const run = method.startsWith('run_') || ['debug_node', 'debug_workflow', 'capture_screenshot'].includes(method);
     let locked = false;
     try {
       if (!allowed.includes(method)) throw new Error('不支持的 MCP 桥接操作');
@@ -93,7 +99,7 @@ export class ExtensionBridge {
       const result = await this.request(instanceId, method, message.params ?? {}, timeout);
       if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ id: message.id, ok: true, result }));
     } catch (error) {
-      if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ id: message.id, ok: false, error: (error as Error).message }));
+      if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ id: message.id, ok: false, error: (error as Error).message, diagnostic: (error as Error & { diagnostic?: unknown }).diagnostic }));
     } finally { if (locked) this.running.delete(instanceId); }
   }
 
@@ -147,8 +153,27 @@ export class ExtensionBridge {
         return;
       }
       this.clients.set(message.instanceId, { socket, instanceId: message.instanceId, version: message.version ?? '', connectedAt: new Date().toISOString() });
+      socket.send(JSON.stringify({ type: 'services', email: true, uploadNativePaths: true, serverVersion, protocolVersion: 1, clientOptions: { command: process.execPath, serverPath: fileURLToPath(new URL('./index.js', import.meta.url)) } }));
       this.broadcastInstances();
       process.stderr.write(`[page-agent] Instance ${message.instanceId} connected\n`);
+      return;
+    }
+    if (message.type === 'inspect_upload_files' && message.id && [...this.clients.values()].some(client => client.socket === socket)) {
+      const owner = [...this.clients.values()].find(client => client.socket === socket)!;
+      const lock = `upload:${owner.instanceId}`;
+      const reply = (data: object) => { if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'upload_file_paths_result', id: message.id, ...data })); };
+      if (this.running.has(lock)) { reply({ ok: false, error: '此插件实例正在读取上传文件，请等待' }); return; }
+      this.running.add(lock);
+      void inspectUploadFiles((message as BridgeResponse & { paths: unknown }).paths).then(result => reply({ ok: true, result })).catch((error: Error) => reply({ ok: false, error: error.message })).finally(() => this.running.delete(lock));
+      return;
+    }
+    if (message.type === 'send_email' && message.id && [...this.clients.values()].some((client) => client.socket === socket)) {
+      const owner = [...this.clients.values()].find((client) => client.socket === socket)!;
+      const lock = `email:${owner.instanceId}`;
+      if (this.running.has(lock)) { socket.send(JSON.stringify({ type: 'email_result', id: message.id, ok: false, error: '此插件实例正在发送另一封邮件，请等待，不要自动重发' })); return; }
+      this.running.add(lock);
+      const data = message as BridgeResponse & { config: unknown; message: unknown };
+      void deliverEmail(data.config, data.message).then((result) => { if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'email_result', id: message.id, ok: true, result })); }).catch((error: Error) => { if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'email_result', id: message.id, ok: false, error: error.message })); }).finally(() => this.running.delete(lock));
       return;
     }
     if (!message.id) return;
@@ -157,7 +182,7 @@ export class ExtensionBridge {
     clearTimeout(pending.timer);
     this.pending.delete(message.id);
     if (message.ok) pending.resolve(message.result);
-    else pending.reject(new Error(message.error ?? 'Extension bridge request failed'));
+    else pending.reject(Object.assign(new Error(message.error ?? 'Extension bridge request failed'), { diagnostic: message.diagnostic }));
   }
 
   request(instanceId: string, method: string, params: Record<string, unknown> = {}, timeoutMs = 120_000): Promise<unknown> {

@@ -15,6 +15,13 @@ function uniqueName(nodes: WorkflowNode[], seed: string): string {
 export function compactRecordedEvents(events: RecordedPageEvent[]): RecordedPageEvent[] {
   const compacted: RecordedPageEvent[] = [];
   for (const event of events) {
+    const prior = compacted.at(-1);
+    // Browsers emit focus + focusin and blur + focusout for the same transition.
+    // One native focus/blur operation replays both; don't duplicate the steps.
+    if (prior && ((prior.event.type === 'focus' && event.event.type === 'focusin') || (prior.event.type === 'blur' && event.event.type === 'focusout'))
+      && prior.target.selector === event.target.selector && prior.target.frameId === event.target.frameId && prior.url === event.url && event.timestamp - prior.timestamp >= 0 && event.timestamp - prior.timestamp < 100) {
+      compacted[compacted.length - 1] = event; continue;
+    }
     if (event.event.type === 'doubleClick') {
       while (compacted.length && compacted.length >= 1 && compacted.at(-1)?.event.type === 'click'
         && compacted.at(-1)?.target.selector === event.target.selector && event.timestamp - compacted.at(-1)!.timestamp < 800) {
@@ -42,7 +49,7 @@ export function recordingToGraph(startUrl: string, startedAt: number, stoppedAt:
   for (const record of events) {
     for (const match of record.event.value?.matchAll(/\{\{([\p{L}\p{N}_-]+)\}\}/gu) ?? []) inputNames.add(match[1]);
   }
-  start.inputs = [...inputNames].map((name) => ({ id: createId('parameter'), name, type: 'string', required: true, description: '录制敏感输入时自动创建，值不会写入工作流文件' }));
+  start.inputs = [...inputNames].map((name) => ({ id: createId('parameter'), name, type: 'string', required: true, description: events.some(record => record.event.type === 'upload' && record.event.value === `{{${name}}}`) ? '上传文件的本机绝对路径；多个路径可每行一个，需启动本机 MCP 服务' : '录制敏感输入时自动创建，值不会写入工作流文件' }));
   const nodes: WorkflowNode[] = [start];
   const edges: WorkflowEdge[] = [];
   let previousId = start.id;

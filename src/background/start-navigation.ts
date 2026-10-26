@@ -1,10 +1,12 @@
+import { RunCancelled } from './execution-control';
 /** Wait for a NEW main-document navigation, never the previous tab's cached complete status. */
-export function navigateToStartUrl(tabId: number, url: string, timeoutMs: number, previousUrl?: string): Promise<chrome.tabs.Tab> {
+export function navigateToStartUrl(tabId: number, url: string, timeoutMs: number, previousUrl?: string, signal?: AbortSignal): Promise<chrome.tabs.Tab> {
   return new Promise((resolve, reject) => {
     let committed = false;
     let finished = false;
     const cleanup = () => {
       clearTimeout(timer);
+      signal?.removeEventListener('abort', abort);
       chrome.tabs.onUpdated.removeListener(onUpdated);
       chrome.tabs.onRemoved.removeListener(onRemoved);
       chrome.webNavigation.onCommitted.removeListener(onCommitted);
@@ -32,7 +34,10 @@ export function navigateToStartUrl(tabId: number, url: string, timeoutMs: number
       committed = true;
       void chrome.tabs.get(tabId).then(complete).catch((error: Error) => fail(error));
     };
+    const abort = () => fail(new RunCancelled());
     const timer = setTimeout(() => fail(new Error(`目标页面加载超时：${url}`)), timeoutMs);
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) { abort(); return; }
     // Register before update: a fast load can commit before tabs.update resolves.
     chrome.tabs.onUpdated.addListener(onUpdated);
     chrome.tabs.onRemoved.addListener(onRemoved);
@@ -50,6 +55,7 @@ export function navigateToStartUrl(tabId: number, url: string, timeoutMs: number
         // A hash-only update is a same-document navigation. Reload explicitly so
         // Start still gets a fresh main document and a real onCommitted event.
         if (previousUrl !== url) await chrome.tabs.update(tabId, { url });
+        if (signal?.aborted) throw new RunCancelled();
         await chrome.tabs.reload(tabId);
       } else await chrome.tabs.update(tabId, { url });
     };

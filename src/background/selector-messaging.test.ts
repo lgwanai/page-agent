@@ -2,6 +2,17 @@ import { describe, expect, it, vi } from 'vitest';
 import { sendSelectorToFrames } from './selector-messaging';
 
 describe('sendSelectorToFrames', () => {
+  it('waits for the asynchronous content loader after injecting once', async () => {
+    const send=vi.fn().mockRejectedValueOnce(new Error('No receiver')).mockRejectedValueOnce(new Error('Module loading')).mockResolvedValueOnce(undefined).mockResolvedValueOnce({ok:true});
+    const inject=vi.fn().mockResolvedValue([]);
+    expect(await sendSelectorToFrames([{frameId:0}],{type:'PAGE_AGENT_START_SELECT'},{send,inject,contentScriptFiles:['loader.js']})).toBe(1);
+    expect(inject).toHaveBeenCalledOnce();expect(send).toHaveBeenCalledTimes(4);
+  });
+  it('reports injection failures with their actual reason', async () => {
+    const send=vi.fn().mockRejectedValue(new Error('No receiver'));
+    const inject=vi.fn().mockRejectedValue(new Error('Could not load file assets/old-loader.js'));
+    await expect(sendSelectorToFrames([{frameId:0}],{type:'PAGE_AGENT_START_SELECT'},{send,inject,contentScriptFiles:['old-loader.js']})).rejects.toThrow('Could not load file assets/old-loader.js');
+  });
   it('delivers directly when the content script is already present', async () => {
     const send = vi.fn().mockResolvedValue({ ok: true });
     const inject = vi.fn();

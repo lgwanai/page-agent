@@ -1,5 +1,8 @@
 import type { ExecutionVerification } from '@/types/workflow';
 import { executeEvent } from './executor';
+import { focusElement } from './focus';
+import { findCalendarFields, hasUnboundCalendarFields, normalizeCalendarField, readCalendarFields, type CalendarFields } from './calendar-fields';
+import { selectCalendarDateTime } from './calendar-datetime';
 
 export function parseCalendarDate(value: string): { year: number; month: number; day: number; iso: string } {
   const match = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/.exec(value.trim());
@@ -161,11 +164,26 @@ function selected(element: HTMLElement): boolean {
   return !!element.closest('[aria-selected="true"], [class*="cell-selected"], [class*="range-start"], [class*="range-end"], [class*="selected-day"]');
 }
 
+function readInlineCalendar(container: HTMLElement | undefined): { dates: string[]; fields: Record<string, string> } {
+  if (!container?.isConnected) return { dates: [], fields: {} };
+  const cells = Array.from(container.querySelectorAll<HTMLElement>('[title], [data-date], [aria-label]')).filter(visible)
+    .flatMap(cell => {
+      const date = ['title', 'data-date', 'aria-label'].map(attr => normalizeCalendarField(cell.getAttribute(attr) ?? '')).find(Boolean);
+      return date && selected(cell) ? [{ cell, date }] : [];
+    });
+  const starts = cells.filter(({ cell }) => cell.closest('[class*="range-start"]'));
+  const ends = cells.filter(({ cell }) => cell.closest('[class*="range-end"]'));
+  const dates = starts.length === 1 && ends.length === 1 ? [starts[0].date, ends[0].date] : [...new Set(cells.map(item => item.date))].sort();
+  return { dates, fields: {} };
+}
+
 export async function selectCalendarDate(selector: string, date: string, endDate?: string): Promise<{ output: unknown; verification: ExecutionVerification }> {
+  if (/[T ]\d{2}:/.test(date.trim()) || endDate && /[T ]\d{2}:/.test(endDate.trim())) return selectCalendarDateTime(selector, date, endDate, { resolve: resolveCalendarContainer, month: calendarMonth });
   const dates = [parseCalendarDate(date), ...(endDate ? [parseCalendarDate(endDate)] : [])];
   if (dates.length === 2 && dates[1].iso < dates[0].iso) throw new Error('结束日期不能早于开始日期');
   const evidence: string[] = [];
   const learned = new Map<string, number>();
+  let recoveryAttempted = false;
   const root = () => resolveCalendarContainer(selector);
   const deadline = Date.now() + 8000;
   while (true) {
@@ -176,22 +194,96 @@ export async function selectCalendarDate(selector: string, date: string, endDate
     }
   }
   evidence.push('日历容器已等待并确认可见');
+  let binding: CalendarFields | undefined = findCalendarFields(root(), dates.length === 2);
+  let lastContainer: HTMLElement | undefined = root();
   const click = async (element: HTMLElement) => {
     if (disabled(element)) throw new Error('目标日期或翻页按钮被禁用');
     const result = await executeEvent(element, { type: 'click' });
     if (!result.verification.ok) throw new Error(result.verification.summary);
     await new Promise((resolve) => setTimeout(resolve, 120));
   };
-  for (const target of dates) {
+  const fail = (message: string, actual: unknown): never => {
+    throw Object.assign(new Error(message), { verification: { ok: false, summary: message, expected: dates.map(item => item.iso), actual, evidence: [...evidence] } });
+  };
+  if (dates.length === 2 && !binding && hasUnboundCalendarFields()) fail('无法唯一关联当前日历的开始和结束输入框，不能核验实际区间，已停止', { fields: '无法唯一关联' });
+  for (const [index, target] of dates.entries()) {
+    let pickerFocusRepaired = false;
+    if (binding?.kind === 'pair') {
+      const field = binding.read()[index];
+      const label = index === 0 ? '开始日期' : '结束日期';
+      if (!field || !visible(field) || disabled(field)) fail(`无法切换到${label}输入框，已停止，未点击目标日期`, readCalendarFields(binding));
+      const changed = document.activeElement !== field;
+      const focus = focusElement(field);
+      evidence.push(`${label}焦点事件：网页焦点=${focus.documentFocused}，原生 focusin=${focus.nativeFocusIn}，补齐事件=${focus.repaired.join(',') || '无需补齐'}`);
+      if (!focus.ok) fail(`${label}输入框未获得焦点，已停止，未点击目标日期`, readCalendarFields(binding));
+      if (changed) await click(field);
+      if (!field.isConnected || document.activeElement !== field) fail(`${label}输入框未获得焦点，已停止，未点击目标日期`, readCalendarFields(binding));
+      evidence.push(`已确认${label}输入框获得焦点（${field.id || field.placeholder || field.name || label}）`);
+    }
     let confirmed = false;
+    const disabledDeadline = Date.now() + 8000;
     for (let turn = 0; turn < 240; turn++) {
       const container = root();
+      lastContainer = container;
       const views = calendarViews(container);
       const known = views.filter((item) => item.month !== undefined);
       const exact = Array.from(container.querySelectorAll<HTMLElement>('[title], [data-date], [aria-label]')).filter((cell) => visible(cell) && ['title', 'data-date', 'aria-label'].some((attr) => cell.getAttribute(attr)?.replace(/\//g, '-') === target.iso));
       const view = views.find((item) => item.month === target.year * 12 + target.month - 1);
       let cells = exact.filter((cell) => (!known.length || !!view?.scope.contains(cell)) && !/prev-month|next-month|outside|other-month/.test(cell.className) && !cell.parentElement?.closest(`[title="${target.iso}"], [data-date="${target.iso}"]`));
       if (!cells.length && view) cells = Array.from(view.scope.querySelectorAll<HTMLElement>('td, [role="gridcell"], button')).filter((cell) => visible(cell) && cell.textContent?.trim() === String(target.day) && !/prev-month|next-month|outside|other-month/.test(cell.className));
+      if (cells.length && cells.every(disabled)) {
+        // Aurora can cache disabledDate while the business page is still
+        // initializing. Observe first; never click or remove disabled flags.
+        if (container.matches('.aurora-picker-panel-layout') || container.querySelector('.aurora-picker-date-panel')) {
+          if (!pickerFocusRepaired) {
+            pickerFocusRepaired = true;
+            const active = document.activeElement;
+            const inputs = binding ? binding.read() : Array.from(document.querySelectorAll<HTMLInputElement>('.aurora-picker-input-active input')).filter(visible);
+            const input = binding?.kind === 'pair' ? inputs[index] : active instanceof HTMLInputElement && active.closest('.aurora-picker') && visible(active) ? active : inputs.length === 1 ? inputs[0] : undefined;
+            if (input) {
+              // An already-focused input does not emit another native focusin.
+              // Aurora's range active-index can remain stale after scripted
+              // opening. Synchronize its handler, then re-read enabled state.
+              input.dispatchEvent(new FocusEvent('focusin', { bubbles: true, composed: true }));
+              evidence.push('已同步 Aurora 日期输入框 focusin，重新检查日期可选状态');
+              await new Promise((resolve) => setTimeout(resolve, 150));
+              continue;
+            }
+          }
+          if (Date.now() < disabledDeadline) {
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            continue;
+          }
+          if (!recoveryAttempted) {
+            recoveryAttempted = true;
+            const trigger = document.activeElement;
+            const original = known.map((item) => item.month!);
+            if (trigger instanceof HTMLInputElement && trigger.closest('.aurora-picker') && visible(trigger)) {
+              evidence.push('日期状态未就绪，尝试一次失焦并重新打开日历');
+              trigger.blur();
+              await new Promise((resolve) => setTimeout(resolve, 150));
+              await click(trigger);
+              await new Promise((resolve) => setTimeout(resolve, 150));
+              const restored = calendarViews(root()).flatMap((item) => item.month === undefined ? [] : [item.month]);
+              if (restored.length !== original.length || restored.some((month, index) => month !== original[index])) throw new Error('日历重新打开后年月不一致，已停止以避免误选');
+              evidence.push('已确认重新打开后年月一致，重新检查日期状态');
+              continue;
+            }
+            const monthArrows = Array.from(container.querySelectorAll<HTMLElement>('button')).filter(actionable);
+            if (original.length && monthArrows.some((button) => navigationHint(button) === -1) && monthArrows.some((button) => navigationHint(button) === 1)) {
+              evidence.push('尝试一次上个月再返回，刷新日历可选状态');
+              await navigateCalendar(root, Math.min(...original) - 1, evidence, click, learned);
+              await navigateCalendar(root, Math.max(...original), evidence, click, learned);
+              const restored = calendarViews(root()).flatMap((item) => item.month === undefined ? [] : [item.month]);
+              if (restored.length !== original.length || restored.some((month, index) => month !== original[index])) throw new Error('日历刷新后未恢复原年月，已停止以避免误选');
+              evidence.push('已校验恢复原年月，重新检查日期禁用状态');
+              continue;
+            }
+          }
+        }
+        const message = `日期 ${target.iso} 被页面禁用，不能选择；请检查数据范围、账号/维度等前置配置和页面允许的日期范围，不要更换 Selector 或强制点击`;
+        throw Object.assign(new Error(message), { verification: { ok: false, summary: message, expected: target.iso, actual: 'disabled', evidence: [...evidence, ...cells.map((cell) => `日期格：${cell.getAttribute('title') ?? cell.textContent}；class=${cell.className}；aria-disabled=${cell.getAttribute('aria-disabled')}`)] } });
+      }
       cells = cells.filter(actionable);
       if (cells.length) {
         // Two-panel ranges repeat spillover dates; prefer the in-month cell.
@@ -199,17 +291,28 @@ export async function selectCalendarDate(selector: string, date: string, endDate
         if (inMonth.length) cells = inMonth;
         if (cells.length !== 1) throw new Error(`日期 ${target.iso} 匹配多个日期格，无法安全选择`);
         const cell = cells[0];
-        const fields = Array.from(document.querySelectorAll<HTMLInputElement>('input')).filter(visible);
+        const fields = binding ? binding.read() : Array.from(document.querySelectorAll<HTMLInputElement>('input')).filter(visible);
         const before = new Map(fields.map((field) => [field, field.value]));
         await click(cell);
         const values = fields.filter((field) => field.value !== before.get(field)).map((field) => field.value);
-        confirmed = selected(cell) || values.some((value) => value.replace(/\//g, '-').includes(target.iso));
+        if (!binding && dates.length === 2 && values.some(value => normalizeCalendarField(value))) fail('区间日历改变了未关联的输入框，不能核验实际起止值，已停止', { changedDates: values.filter(value => normalizeCalendarField(value)) });
+        // Single-date popups can disappear on click. Adopt only a unique field
+        // changed by this click; range fields require an established owner.
+        if (!binding && dates.length === 1) {
+          const changed = fields.filter(field => field.value !== before.get(field) && normalizeCalendarField(field.value) === target.iso);
+          if (changed.length === 1) {
+            const field = changed[0];
+            binding = { kind: 'single', read: () => field.isConnected ? [field] : [] };
+          }
+        }
+        confirmed = binding?.kind === 'pair' ? selected(cell) || normalizeCalendarField(binding.read()[index]?.value ?? '') === target.iso
+          : selected(cell) || values.some((value) => normalizeCalendarField(value) === target.iso || binding?.kind === 'combined' && readCalendarFields(binding).dates.includes(target.iso));
         evidence.push(`点击日期 ${target.iso}`, ...values.map((value) => `输入框更新：${value}`));
-        if (!confirmed) {
-          const replacement = Array.from(document.querySelectorAll<HTMLElement>('[title], [data-date]')).find((item) => visible(item) && (item.title === target.iso || item.dataset.date === target.iso) && selected(item));
+        if (!confirmed && !binding) {
+          const replacement = Array.from(container.querySelectorAll<HTMLElement>('[title], [data-date]')).find((item) => visible(item) && (item.title === target.iso || item.dataset.date === target.iso) && selected(item));
           confirmed = !!replacement;
         }
-        if (!confirmed) throw new Error(`已点击 ${target.iso}，但未检测到选中标记或输入框日期更新，不能确认选择成功`);
+        if (!confirmed) fail(`已点击 ${target.iso}，但未检测到对应日期字段更新或选中标记，不能确认选择成功`, binding ? readCalendarFields(binding) : readInlineCalendar(container));
         break;
       }
       if (!known.length) throw new Error('无法识别日历年月标题；支持中文年月、数字年月和英文月份，请提供此日历截图用于适配');
@@ -223,5 +326,24 @@ export async function selectCalendarDate(selector: string, date: string, endDate
     }
     if (!confirmed) throw new Error('日历翻页超过 240 次，已停止');
   }
-  return { output: dates.map((item) => item.iso), verification: { ok: true, summary: `日历日期已验证：${dates.map((item) => item.iso).join(' 至 ')}`, expected: dates.map((item) => item.iso), actual: dates.map((item) => item.iso), evidence } };
+  // Verify the CURRENT range together after asynchronous handlers settle. A
+  // click receipt or old selected cell is not proof that the start survived.
+  const expected = dates.map(item => item.iso);
+  const readActual = () => {
+    if (binding) return readCalendarFields(binding);
+    try { return readInlineCalendar(root()); } catch { return readInlineCalendar(lastContainer); }
+  };
+  const verifyDeadline = Date.now() + 2000;
+  let matchedSince: number | undefined;
+  let actual = readActual();
+  while (true) {
+    actual = readActual();
+    const matches = actual.dates.length === expected.length && actual.dates.every((value, index) => value === expected[index]);
+    if (matches) matchedSince ??= Date.now(); else matchedSince = undefined;
+    if (matchedSince !== undefined && Date.now() - matchedSince >= 300) break;
+    if (Date.now() >= verifyDeadline) fail(`日历最终日期校验失败：预期 ${expected.join(' 至 ')}，实际 ${actual.dates.map(value => value || '空').join(' 至 ') || '无法读取'}；不会将点击成功当作选择成功`, actual);
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  evidence.push(`最终实际日期核验：${actual.dates.join(' 至 ')}`, ...Object.entries(actual.fields).map(([name, value]) => `实际输入框 ${name}：${value || '空'}`));
+  return { output: actual.dates, verification: { ok: true, summary: `日历日期已验证：${actual.dates.join(' 至 ')}`, expected, actual: actual.dates, evidence } };
 }
