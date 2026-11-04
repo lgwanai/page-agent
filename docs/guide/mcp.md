@@ -1,5 +1,17 @@
 # MCP 接入与编排
 
+## 一键配置并启动
+
+当前扩展 0.10.77 / MCP 0.10.21 的完整安装包不需要在插件内手动导入文件、填写路径或复制命令到终端：
+
+1. 首次双击完整包中的 `Setup.command`（Mac）或 `Setup.cmd`（Windows）。Setup 自动注册当前目录的 Chrome 插件并将本机路径写入 `extension`。
+2. Chrome 加载包内的 `extension` 目录，在插件 MCP 页面点击 **配置并启动**。
+3. 打开插件也会自动检测。只有配置有效且实际连接成功时，一键操作才返回成功；连接超时或旧目录服务冲突会提示原因。
+
+删除重加同一目录的插件不需要重新复制 ID 或安装命令。移动安装包或换用新版目录时，重新双击该目录的 Setup。首次本机安装无法由 Chrome 插件自行完成，这是浏览器的权限边界；只安装插件 ZIP 不会安装本机服务。
+
+文件导入、手填路径和旧版启动器安装命令保留在折叠的 **高级设置与手动配置** 中用于排障。模型客户端仍需单独启用 stdio MCP 配置，插件不会修改其他客户端的配置文件。详见 [本机部署说明](../cross-platform-mcp.md)。
+
 ## 连接关系
 
 Agent 客户端通过 stdio 启动本机 MCP 服务，服务通过本机桥接连接 Chrome 扩展。浏览器中的业务登录态保留在目标 Chrome 配置文件内。
@@ -8,12 +20,12 @@ Agent 客户端通过 stdio 启动本机 MCP 服务，服务通过本机桥接�
 Agent 客户端 → stdio MCP 服务 → 本机桥接 → Chrome 扩展 → 目标网页
 ```
 
-`ws://127.0.0.1:17373/extension` 是插件连接地址，不是应填写到客户端的 HTTP MCP 地址。插件不能自行启动 Node 服务；“重试连接”也不能代替启动服务。
+`ws://127.0.0.1:17373/extension` 是插件连接地址，不是应填写到客户端的 HTTP MCP 地址。扩展可通过一次性安装的本机启动器自动启动共享桥接，MCP 面板提供“配置并启动”按钮；“重试连接”只重连，不负责启动。
 
 ## 配置流程
 
 1. 便携包运行 Setup，或源码环境按 [安装与升级](installation.md) 构建服务。
-2. 在本机生成 `page-agent-mcp.json`，或在插件“MCP”面板导入本机配置。
+2. 完整包由 Setup 写入配置，插件点击“配置并启动”；源码环境用 `npm run mcp:config` 生成客户端 JSON，高级导入保留用于排障。
 3. 将 JSON 的 `page-agent` 条目合并到客户端的 `mcpServers`；保留其他已有服务。
 4. 在客户端启用/重启服务，回到侧栏确认 MCP 已连接。
 5. 用 `list_page_agent_instances` 选择目标实例，再读取或运行目标流程。
@@ -48,6 +60,24 @@ JSON 字符串中的 Windows 反斜线需要转义；优先使用 Setup 或 `npm
 ```
 
 工具名为 `run_page_workflow`。名称不能代替工作流 UUID；参数以开始节点声明为准。MCP 不会补用手动运行的历史参数。
+
+## 异步录屏：立即返回，随后查询
+
+`mediaRecording` 节点不占用整段录制时长的 MCP 请求。Start 选择“保持当前页面”，录制节点使用 `record/start`，后接 Output 返回 `{{直播录制.statusUrl}}`。启动后即返回 `taskId`、`statusUrl`、`expiresAt`、`pollAfterMs`，节点成功仅表示任务已受理。
+
+Agent 在运行 MCP 的同一台电脑每约 2 秒 GET 实际返回的 `statusUrl`：
+
+| 状态 | 处理 |
+| --- | --- |
+| `recording` / `saving`，`done=false` | 等待 pollAfterMs 后继续查询 |
+| `completed`，`done=true`，`success=true` | 使用 filePath 读取本机文件，或 GET fileUrl 下载 |
+| `failed`，`done=true`，`success=false` | 查看 error；partialFile 是已录部分，不能当作完整定时任务成功 |
+| `unavailable`，`done=false`，HTTP 503 | 扩展暂未连接或状态查询超时，稍后查询同一 URL |
+| HTTP 410 | URL 已过期，本机已保存的文件不受影响 |
+
+MCP 客户端断开、流程结束或取消后，已受理录制仍继续。需要停止时使用录制的 `stop` 节点或侧栏控制，然后继续查询同一 URL，直到磁盘保存确认。URL 包含随机访问令牌，最长有效 24 小时，保留最近 100 个任务；不能公开分享。云端 Agent 不能直接访问用户电脑的 127.0.0.1，须通过同机 HTTP 客户端拉取。
+
+该 HTTP 接口不是新的 MCP 服务入口。它面向本机 HTTP 客户端，不提供跨域网页 fetch 接口。参数、权限、文件下载和完整输出示例见 [网页录制指南](../live-recording.md)，MCP 编辑示例见 [编排参考](../mcp-authoring.md#异步网页录制扩展-01077--mcp-01021)。
 
 ## 创建与修改
 

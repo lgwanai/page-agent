@@ -1,13 +1,14 @@
+import { chromeExtensionId } from '../mcp-server/src/native-host';
 import { createHash } from 'node:crypto';
 import { test as base, expect, chromium, type BrowserContext, type Page, type Worker } from '@playwright/test';
-import { mkdtemp, rm, cp, readdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, cp, readdir, readFile, writeFile, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createStartNode, type ScriptDefinition, type WorkflowNode } from '../src/types/workflow';
 const site = 'http://127.0.0.1:4179';
 const id = '11223344-1111-4111-8111-aabbccddeeff';
 const makeWorkflow = (nodes: WorkflowNode[], name = '端到端验收'): ScriptDefinition => ({ id, name, createdAt: 1, updatedAt: 1, nodes, edges: nodes.slice(1).map((node, index) => ({ id: `edge${index}`, sourceNodeId: nodes[index].id, targetNodeId: node.id, sourcePort: 'success' })) });
-const test = base.extend<{ extension: { context: BrowserContext; panel: Page; worker: Worker; target: Page; panelUrl: string } }>({
+const test = base.extend<{ extension: { context: BrowserContext; panel: Page; worker: Worker; target: Page; panelUrl: string; extensionPath: string } }>({
   extension: async ({}, use, testInfo) => {
     const profile = await mkdtemp(join(tmpdir(), 'page-agent-e2e-'));
     const extensionPath = join(profile, 'extension');
@@ -33,7 +34,7 @@ const test = base.extend<{ extension: { context: BrowserContext; panel: Page; wo
       await panel.goto(panelUrl); await expect(panel.getByRole('button', { name: '创建工作流', exact: true })).toBeVisible();
       await expect(panel.locator('.bridge.online')).toBeVisible();
       await worker.evaluate(async () => { const tabs = await chrome.tabs.query({}); const target = tabs.find(tab => tab.url?.startsWith('http://127.0.0.1:4179/')); if (target?.id) await chrome.tabs.update(target.id, { active: true }); });
-      await use({ context, panel, worker, target, panelUrl });
+      await use({ context, panel, worker, target, panelUrl, extensionPath });
       if (!panel.isClosed()) await panel.screenshot({ path: testInfo.outputPath('panel.png'), fullPage: true });
     } finally { await context.close(); await rm(profile, { recursive: true, force: true }); await rm(testInfo.outputPath('large-files'), { recursive: true, force: true }); }
   },
@@ -602,8 +603,12 @@ test('property handler preserves a usable canvas at narrow and wide widths and d
     expect(canvas!.height).toBeGreaterThanOrEqual(160); expect(details!.y).toBeGreaterThanOrEqual(canvas!.y + canvas!.height);
     expect(details!.width).toBeLessThanOrEqual(width);
     if (width === 360 && height === 840) await panel.locator('.canvas-layout').screenshot({ path: testInfo.outputPath('properties-expanded.png') });
-    const node = await panel.locator('.canvas-node-head').first().boundingBox();
-    await panel.mouse.move(node!.x + 130, node!.y + 18);
+    // Opening details resizes the canvas and can trigger its deferred fit.
+    // Wait for that viewport, then let locator actionability target the header.
+    await expect.poll(() => graphIsVisible(panel, 1)).toBe(true);
+    const header = panel.locator('.canvas-node-head').first();
+    await header.hover({ position: { x: 130, y: 18 } });
+    const node = await header.boundingBox();
     await panel.mouse.down(); await panel.mouse.move(node!.x + 150, node!.y + 48, { steps: 8 }); await panel.mouse.up();
     await expect(panel.locator('.node-inspector')).toHaveCount(0);
     await expect(panel.getByRole('button', { name: '展开节点属性', exact: true })).toBeVisible();
@@ -936,4 +941,84 @@ test('MCP discovers, creates, debugs and exports request nodes', async ({ extens
     const exported = await call('export_page_workflow', auth); expect(exported.workflow.nodes).toContainEqual(expect.objectContaining(node));
     await panel.reload(); await more(panel, '编辑'); await expect(panel.locator('.canvas-node-body [lang="en"]').filter({ hasText: 'HTTP Request' })).toHaveCount(1);
   } finally { await client.close(); }
+});
+
+test('MCP launcher uses the loaded extension ID and keeps a healthy connection running', async ({ extension: { panel, worker, extensionPath } }) => {
+  await panel.getByRole('button', { name: 'MCP 连接配置', exact: true }).click();
+  await expect(panel.getByRole('button', { name: '配置并启动', exact: true })).toBeDisabled();
+  const extensionId = new URL(worker.url()).host;
+  expect(chromeExtensionId(await realpath(extensionPath))).toBe(extensionId);
+  const before = await panel.evaluate(async () => chrome.runtime.sendMessage({ type: 'PAGE_AGENT_GET_MCP_INFO' }));
+  const options = before.result.clientOptions;
+  const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+  await panel.getByText('高级设置与手动配置', { exact: true }).click();
+  await expect(panel.getByRole('textbox', { name: '本机启动器安装命令', exact: true })).toHaveValue(`${quote(options.command)} ${quote(options.serverPath.replace(/index\.js$/, 'native-host.js'))} --install ${extensionId}`);
+  const result = await panel.evaluate(async () => chrome.runtime.sendMessage({ type: 'PAGE_AGENT_SETUP_MCP' }));
+  expect(result.ok).toBe(true);
+  expect(result.result.connected).toBe(true);
+  expect(result.result.clientOptionsSource).toBe('saved');
+  expect(result.result.clientOptions).toEqual(options);
+  await expect(panel.getByText('已连接本机 MCP 服务', { exact: true })).toBeVisible();
+});
+
+test('MCP one-click screen hides manual configuration and needs no imported file', async ({ extension: { panel } }) => {
+  await panel.getByRole('button', { name: 'MCP 连接配置', exact: true }).click();
+  await expect(panel.getByRole('button', { name: '配置并启动', exact: true })).toBeVisible();
+  await expect(panel.getByRole('button', { name: '导入本机 MCP 配置', exact: true })).not.toBeVisible();
+  await expect(panel.getByRole('button', { name: '复制启动器安装命令', exact: true })).not.toBeVisible();
+  await expect(panel.getByText('已连接本机 MCP 服务', { exact: true })).toBeVisible();
+  await expect(panel.locator('details.mcp-advanced')).not.toHaveAttribute('open');
+});
+
+test('a fresh install without a local service stays offline without Chrome extension errors', async ({}, testInfo) => {
+  const profile = await mkdtemp(join(tmpdir(), 'page-agent-offline-e2e-'));
+  const extensionPath = join(profile, 'extension');
+  await cp(resolve('dist'), extensionPath, { recursive: true, filter: source => !source.endsWith('.map') });
+  const isolate = async (directory: string) => {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) await isolate(path);
+      else if (entry.name.endsWith('.js') || entry.name === 'manifest.json') {
+        const value = await readFile(path, 'utf8');
+        await writeFile(path, value.replaceAll('127.0.0.1:17373', '127.0.0.1:4177').replace(/\b17373\b/g, '4177'));
+      }
+    }
+  };
+  await isolate(extensionPath);
+  await writeFile(join(extensionPath, 'offline-control.js'), "self.pageAgentErrorControl = () => { const socket = new WebSocket('ws://127.0.0.1:4177/extension'); socket.addEventListener('error', () => socket.close()); };\n");
+  const loader = join(extensionPath, 'service-worker-loader.js');
+  await writeFile(loader, await readFile(loader, 'utf8') + '\nimport "./offline-control.js";\n');
+  const context = await chromium.launchPersistentContext(profile, { channel: 'chromium', headless: true, args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] });
+  try {
+    const worker = context.serviceWorkers()[0] ?? await context.waitForEvent('serviceworker');
+    const extensionId = new URL(worker.url()).host;
+    const panel = await context.newPage(); await panel.goto(`chrome-extension://${extensionId}/src/sidepanel/index.html`);
+    await panel.getByRole('button', { name: 'MCP 连接配置', exact: true }).click();
+    await expect.poll(async () => (await panel.evaluate(async () => chrome.runtime.sendMessage({ type: 'PAGE_AGENT_GET_MCP_INFO' }))).result.launcherError).toContain('Setup');
+    await expect(panel.getByText('尚未连接本机 MCP 服务', { exact: true })).toBeVisible();
+    await panel.evaluate(async () => chrome.runtime.sendMessage({ type: 'PAGE_AGENT_RECONNECT_MCP' }));
+    await expect.poll(async () => (await panel.evaluate(async () => chrome.runtime.sendMessage({ type: 'PAGE_AGENT_GET_MCP_INFO' }))).result.connecting).toBe(false);
+    const management = await context.newPage(); await management.goto('chrome://extensions');
+    await management.evaluate(async id => {
+      const api = (chrome as unknown as { developerPrivate: {
+        updateProfileConfiguration: (value: { inDeveloperMode: boolean }) => Promise<void>;
+        updateExtensionConfiguration: (value: { extensionId: string; errorCollection: boolean }) => Promise<void>;
+      } }).developerPrivate;
+      await api.updateProfileConfiguration({ inDeveloperMode: true });
+      await api.updateExtensionConfiguration({ extensionId: id, errorCollection: true });
+    }, extensionId);
+    await panel.evaluate(async () => chrome.runtime.sendMessage({ type: 'PAGE_AGENT_RECONNECT_MCP' }));
+    await expect.poll(async () => (await panel.evaluate(async () => chrome.runtime.sendMessage({ type: 'PAGE_AGENT_GET_MCP_INFO' }))).result.connecting).toBe(false);
+    const errors = async () => management.evaluate(async id => {
+      const api = (chrome as unknown as { developerPrivate: { getExtensionInfo: (id: string, callback: (info: { runtimeErrors: Array<{ message: string }> }) => void) => void } }).developerPrivate;
+      const info = await new Promise<{ runtimeErrors: Array<{ message: string }> }>(resolve => api.getExtensionInfo(id, resolve));
+      return info.runtimeErrors.map(error => error.message);
+    }, extensionId);
+    expect(await errors()).toEqual([]);
+    await panel.screenshot({ path: testInfo.outputPath('offline-mcp.png'), fullPage: true });
+    // Positive control: prove this test detects the exact browser-generated
+    // error from the old startup path, even with a WebSocket error listener.
+    await worker.evaluate(() => (globalThis as unknown as { pageAgentErrorControl: () => void }).pageAgentErrorControl());
+    await expect.poll(async () => (await errors()).some(error => error.includes('WebSocket connection'))).toBe(true);
+  } finally { await context.close(); await rm(profile, { recursive: true, force: true }); }
 });

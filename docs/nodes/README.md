@@ -13,6 +13,7 @@
 | 请求 | HTTP Request | `request` | HTTP/HTTPS，返回 Text/JSON；[请求](request.md) |
 | 数据表 | DataTable | `datatable` | 当前 DOM 表格转结构化数据和 Excel；[数据读取](data.md) |
 | 表格填充 | Table Fill | `tableFill` | 按 key 列匹配写入网页表格；[数据读取](data.md) |
+| 网页录制 | Web Recording | `mediaRecording` | 网页画面与声音、仅声音、定时或开始/停止；[录制指南](../live-recording.md) |
 | 截图 | Screenshot | `screenshot` | 可视、整页或区域 PNG；[截图与模型](media-and-ai.md) |
 | 发送邮件 | Email | `email` | 正文与文件附件；[截图与模型](media-and-ai.md) |
 | 日历选择器 | Calendar | `calendar` | 日期与日期时间；[弹窗与日历](dialog-and-calendar.md) |

@@ -3,6 +3,8 @@ import type { McpClientOptions } from './mcp';
 import type { DomQuery, EventDefinition, PageTarget, RecordedPageEvent, RecordedTargetHint, RecordingResult, RunResult, StepResult, WorkflowEdge, WorkspaceState } from './workflow';
 
 export type RuntimeMessage =
+  | { type: 'PAGE_AGENT_MEDIA_READY'; id: string }
+  | { type: 'PAGE_AGENT_MEDIA_RECORDING'; operation: 'start' | 'stop' | 'status'; tabId?: number; options?: import('@/shared/media-recording').MediaRecordingOptions }
   | { type: 'PAGE_AGENT_REPAIR_TARGET'; target: PageTarget }
   | { type: 'PAGE_AGENT_PREPARE_UPLOAD'; selector: string }
   | { type: 'PAGE_AGENT_VALIDATE_UPLOAD' | 'PAGE_AGENT_VERIFY_UPLOAD'; selector: string; token: string; files: import('@/shared/upload').UploadFileInfo[] }
@@ -55,6 +57,8 @@ export type RuntimeMessage =
   | { type: 'PAGE_AGENT_GET_MCP_INFO' }
   | { type: 'PAGE_AGENT_SAVE_MCP_OPTIONS'; options: McpClientOptions }
   | { type: 'PAGE_AGENT_RECONNECT_MCP' }
+  | { type: 'PAGE_AGENT_START_MCP' }
+  | { type: 'PAGE_AGENT_SETUP_MCP' }
   | { type: 'PAGE_AGENT_SET_STATE'; state: WorkspaceState; expectedRevisions?: Record<string, number> }
   | { type: 'PAGE_AGENT_GET_PROVIDER' }
   | { type: 'PAGE_AGENT_SAVE_PROVIDER'; config: AiProviderConfig; apiKey?: string }

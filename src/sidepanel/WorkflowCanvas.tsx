@@ -44,6 +44,7 @@ const PORTS: Record<WorkflowNode['kind'], WorkflowPort[]> = {
   output: [inputPort, ...successFailurePorts],
   watch: [inputPort, ...successFailurePorts],
   screenshot: [inputPort, ...successFailurePorts],
+  mediaRecording: [inputPort, ...successFailurePorts],
   datatable: [inputPort, ...successFailurePorts],
   tableFill: [inputPort, ...successFailurePorts],
   email: [inputPort, ...successFailurePorts],
@@ -79,6 +80,7 @@ function nodeSummary(node: WorkflowNode): string {
   else if (node.kind === 'datatable') summary = `表格数据 · ${node.target.selector || '未选择表格'}`;
   else if (node.kind === 'tableFill') summary = `按 ${node.keyColumns.join(' + ') || '未配置 key'} 匹配填充 · ${node.target.selector || '未选择表格'}`;
   else if (node.kind === 'screenshot') summary = node.mode + ' · ' + node.fileName;
+  else if (node.kind === 'mediaRecording') summary = `${{ record: '定时录制', start: '开始录制', stop: '停止并保存', status: '读取状态' }[node.action]} · ${node.mode === 'audio' ? '仅声音' : '画面和声音'} · ${node.durationMs / 1000} 秒`;
   else if (node.kind === 'email') summary = node.to + ' · ' + node.subject;
   else if (node.kind === 'request') summary = `${node.method} · ${node.url || '未配置链接'} · ${node.responseType === 'json' ? 'JSON' : 'Text'}`;
   else if (node.kind === 'calendar') summary = `${node.date || '未配置日期'}${node.mode === 'range' ? ` 至 ${node.endDate || '未配置结束日期'}` : ''}`;

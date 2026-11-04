@@ -1,4 +1,4 @@
-export const baseline = '2026-10-27';
+export const baseline = '2026-11-04';
 export const chapters = [
   ['overview', 'README.md', '手册导航', '阅读路径、版本和任务入口', '开始使用'],
   ['installation', 'guide/installation.md', '安装与升级', '扩展、便携包、源码和版本确认', '开始使用'],
@@ -8,13 +8,14 @@ export const chapters = [
   ['workflows', 'guide/workflows.md', '工作流管理', '查找、备份、迁移、删除和恢复', '日常操作'],
   ['execution', 'guide/execution.md', '运行与调试', '执行方式、验收、停止和运行历史', '日常操作'],
   ['mcp', 'guide/mcp.md', 'MCP 接入与编排', '本机连接、调用身份和工具速查', '日常操作'],
-  ['nodes', 'nodes/README.md', '节点目录', '全部 17 种类型及适用场景', '节点指南'],
+  ['nodes', 'nodes/README.md', '节点目录', '全部 18 种类型及适用场景', '节点指南'],
   ['web', 'nodes/web.md', '网页操作与定位', '控件事件、iframe、自动修复和上传', '节点指南'],
   ['data', 'nodes/data.md', '数据读取与结果', '检索、监控、数据表、填充和输出', '节点指南'],
   ['control', 'nodes/control.md', '流程控制', '开始、等待、循环、分页与兼容 Action', '节点指南'],
   ['request', 'nodes/request.md', '请求', 'HTTP/HTTPS 与 Text/JSON 返回', '节点指南'],
   ['dialog-calendar', 'nodes/dialog-and-calendar.md', '弹窗与日历', '确认、输入、离开页面和日期时间', '节点指南'],
-  ['media-ai', 'nodes/media-and-ai.md', '截图、邮件与智能分析', '文件、附件、本机配置与模型调用', '节点指南'],
+  ['media-ai', 'nodes/media-and-ai.md', '录制、截图、邮件与智能分析', '音视频录制、文件、附件与模型调用', '节点指南'],
+  ['recording', 'live-recording.md', '网页录制与直播', '录屏、录音、后台保存与真实验证', '节点指南'],
   ['troubleshooting', 'guide/troubleshooting.md', '故障排查', '从第一处失败定位问题', '查阅参考'],
   ['data-permissions', 'guide/data-and-permissions.md', '数据与权限', '本机存储、外发、导出与账号边界', '查阅参考'],
   ['limits', 'reference/limits.md', '限制速查', '当前实现的容量、超时与不支持范围', '查阅参考'],

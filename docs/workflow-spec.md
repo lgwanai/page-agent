@@ -38,7 +38,7 @@
 - `workflow.id` 是工作流的全局唯一标识。新工作流使用 UUID v4。导入时如与本机已有 ID 冲突，插件会生成新 ID。
 - `nodes` 保存开始、网页操作、检索、输出、请求、智能分析、等待和循环等节点；`edges` 保存节点之间的成功、失败、遍历和完成路径。请求节点配置与返回值见 [请求节点](http-request.md)。
 - Start 节点的 `targetUrl` 是执行入口。录制生成的工作流会自动写入开始录制时的网页 URL。
-- 配置了 `targetUrl` 时，每次运行都会重新导航到该地址（即使当前地址相同），等待新的主文档导航与加载完成。URL 留空才复用当前页面。普通/强校验仅控制导航后最终地址的校验范围，不决定是否导航。Start 日志记录 `previousUrl`、`requestedUrl`、`url` 和 `navigated`；地址加载完成不代表业务控件已经可用，后续节点继续进行控件校验。
+- 未启用 `keepCurrentPage` 且配置了 `targetUrl` 时，每次运行都会重新导航到该地址（即使当前地址相同），等待新的主文档导航与加载完成。URL 留空或显式 `keepCurrentPage=true` 时复用当前页面；显式保持当前页面会忽略 targetUrl，并在 0.10.77 起不等待整个标签页 complete。普通/强校验仅控制导航后最终地址的校验范围，不决定是否导航。Start 日志记录 `previousUrl`、`requestedUrl`、`url` 和 `navigated`；地址加载完成不代表业务控件已经可用，后续节点继续进行控件校验。
 - 网页节点的 `target` 保存 selector、元素类型和可读标签，`event` 保存点击、输入、选择、滚动、右键、长按等操作。
 - `target.frameUrl` 可选，保存节点所在文档的地址，用于 iframe 重建后的重新定位；`frameId` 仅是录制时的提示。旧工作流没有 `frameUrl` 时，会通过 selector 唯一匹配当前 frame；跨 frame 匹配不唯一时停止，避免误操作。
 - 网页操作的 selector 失效时，可用 `target` 已记录的元素类型、名称、placeholder 等稳定身份信息唯一定位；按钮可用已记录文本消除歧义。找不到或有多个匹配时走失败分支，不会猜测并点击第一个节点。Query 检索范围和多元素读取仍使用配置的 selector，不进行单节点身份恢复。
@@ -117,3 +117,7 @@ PageTarget 可携带 locator（version=1、selector、tagName、inputType、conf
 进入编辑器后，等待节点文档与可见区域及引擎尺寸同步，再适配当前保存的节点位置。初始化不执行整理；隐藏后显示的画布会继续等待并初始化。正常编辑不会自动重设视野，拖拽或滚轮操作会中断待执行的初始适配。
 
 悬浮工具栏的节点库图标用于新增节点，缩放区提供放大、缩小、百分比按钮（重置为 100%）和适应全部节点。缩放围绕当前视野中心进行，百分比随滚轮与工具按钮更新；视野操作不会成为工作流编辑或改变节点位置。
+
+## 网页录制节点
+
+新增 `kind=mediaRecording`，0.10.76 起录制改为异步任务（直播已播放页面建议扩展 0.10.77）。字段为 `action`（record/start/stop/status）、`mode`（videoAudio/audio）、`durationMs`、`fileName`，可选 `recordingId`。record/start 立即输出 taskId/statusUrl/expiresAt/pollAfterMs；Agent 轮询同一 URL，完成后返回 filePath/fileUrl。stop 仅发起停止与后台保存，status 读取快照。录制结果和 URL 属于运行时输出，不写入工作流导出；不复用截图 Base64 格式。见 [网页录制指南](live-recording.md)。

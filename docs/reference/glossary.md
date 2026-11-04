@@ -22,6 +22,9 @@
 | MCP | Agent 客户端与本机工具服务之间的协议 |
 | stdio | 客户端通过进程标准输入输出与 MCP 服务通信 |
 | Bridge | 本机服务与 Chrome 扩展之间的桥接；不是公网服务地址 |
+| taskId / id | 后台录制任务标识 / 启动节点返回的录制会话 ID；HTTP 状态中会话字段为 recordingId，停止节点配置 recordingId 可引用 {{开始录制.id}} |
+| statusUrl | Agent 在本机轮询的任务状态地址，包含随机访问令牌 |
+| filePath / fileUrl | 最终保存文件的本机绝对路径 / 本机 HTTP 下载地址 |
 | Provider | 智能分析节点所用的模型服务配置 |
 | Action | 兼容旧版的已保存操作集合；当前界面不提供新建保存入口 |
 

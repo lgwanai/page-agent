@@ -29,7 +29,7 @@ function object(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
-const NODE_KINDS = new Set<WorkflowNode['kind']>(['start', 'dom', 'dialog', 'query', 'output', 'watch', 'screenshot', 'datatable', 'tableFill', 'email', 'calendar', 'pagination', 'ai', 'action', 'wait', 'loop', 'request']);
+const NODE_KINDS = new Set<WorkflowNode['kind']>(['start', 'dom', 'dialog', 'query', 'output', 'watch', 'screenshot', 'mediaRecording', 'datatable', 'tableFill', 'email', 'calendar', 'pagination', 'ai', 'action', 'wait', 'loop', 'request']);
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function validateScope(nodes: unknown[], edges: unknown[], globalIds = new Set<string>(), depth = 0): void {

@@ -46,6 +46,7 @@ for (const path of paths) {
 const bundle = await build({ stdin: { contents: 'export { importWorkflow } from "./src/shared/workflow-file"; export { NODE_KIND_LABELS, NODE_KIND_ENGLISH } from "./src/types/workflow";', resolveDir: root, loader: 'ts' }, bundle: true, format: 'esm', platform: 'node', write: false, tsconfig: resolve(root, 'tsconfig.json') });
 const { importWorkflow, NODE_KIND_LABELS, NODE_KIND_ENGLISH } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
 const catalog = await text('docs/nodes/README.md');
+assert.equal(metadata.nodeTypes, Object.keys(NODE_KIND_LABELS).length);
 for (const [kind, label] of Object.entries(NODE_KIND_LABELS)) {
   assert(catalog.includes('`' + kind + '`'), `节点目录缺少 ${kind}`);
   assert(catalog.includes(label) && catalog.includes(NODE_KIND_ENGLISH[kind]), `节点双语名称缺失：${kind}`);

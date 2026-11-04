@@ -1,13 +1,18 @@
 import Busboy from 'busboy';
 import { createHash } from 'node:crypto';
 import { ExtensionBridge } from '../../mcp-server/dist/bridge.js';
-const bridge = new ExtensionBridge(4178);
+const bridge = new ExtensionBridge(4178, { recordingTaskStorePath: null });
 await bridge.ready;
 import { createServer } from 'node:http';
 const style = '<style>body{font:16px system-ui;padding:30px}label,button{display:block;margin:14px 0}input{padding:8px}iframe{width:600px;height:220px}</style>';
 const apiCounts = new Map();
 createServer(async (request, response) => {
   const url = new URL(request.url, 'http://127.0.0.1:4179');
+  if (url.pathname === '/recording-pending-frame') {
+    response.writeHead(200, { 'Content-Type': 'text/html' }); response.write('<title>Pending live resource</title>');
+    const timer = setTimeout(() => response.end('loaded'), 45000);
+    response.on('close', () => clearTimeout(timer)); return;
+  }
   if (url.pathname.startsWith('/request-api/')) {
     const key = url.searchParams.get('run') || 'default';
     const stats = apiCounts.get(key) || { calls: 0, aborted: 0 }; apiCounts.set(key, stats);
@@ -39,6 +44,16 @@ createServer(async (request, response) => {
     request.pipe(parser); return;
   }
   response.setHeader('Content-Type', 'text/html; charset=utf-8');
+  if (url.pathname === '/recording-fixture') return response.end(`<title>录屏音画验收</title>${url.searchParams.has('pending') ? '<iframe src="/recording-pending-frame"></iframe>' : ''}<button id="play">播放测试音画</button><canvas id="screen" width="640" height="360"></canvas><script>
+    document.querySelector('#play').onclick=async()=>{
+      if(window.playing)return;window.playing=true;
+      const audio=new AudioContext();await audio.resume();const oscillator=audio.createOscillator();oscillator.frequency.value=440;const gain=audio.createGain();gain.gain.value=0;oscillator.connect(gain).connect(audio.destination);oscillator.start();
+      const start=audio.currentTime;for(let t=0;t<60;t++){gain.gain.setValueAtTime(.15,start+t);gain.gain.setValueAtTime(0,start+t+.5);}
+      const canvas=document.querySelector('#screen'),draw=canvas.getContext('2d');
+      function paint(){const elapsed=audio.currentTime-start;draw.fillStyle=elapsed%1<.5?'#ffffff':'#153b65';draw.fillRect(0,0,640,360);draw.fillStyle='#f52e6a';draw.font='bold 48px sans-serif';draw.fillText(elapsed.toFixed(3)+' seconds',40,180);requestAnimationFrame(paint);}paint();
+      document.querySelector('#play').textContent='测试音画播放中';
+    };
+  </script>`);
   const uploadUI = `<label for="upload-file" id="upload-label">上传文件</label><div id="upload-wrapper"><input hidden type="file" id="upload-file" name="files" accept=".txt,.pdf,.bin" multiple></div><input id="single-file" type="file" accept=".txt"><output id="upload-receipt"></output><script>for (const input of document.querySelectorAll('input[type=file]')) input.onchange=async()=>{const data=new FormData();for(const file of input.files)data.append('files',file);const response=await fetch('/upload',{method:'POST',body:data});document.querySelector('#upload-receipt').textContent=JSON.stringify(await response.json());};</script>`;
   if (request.url === '/dialogs') return response.end(`${style}<title>原生弹窗验收</title><button id="confirm-button">确认操作</button><button id="prompt-button">输入备注</button><button id="alert-button">提示</button><button id="delayed-button">延迟弹窗</button><button id="none-button">没有弹窗</button><button id="arm-unload">开启离开确认</button><a id="leave" href="/after-dialog">离开</a><output id="dialog-result"></output><output id="trigger-count">0</output><script>
     function count(){const el=document.querySelector('#trigger-count');el.textContent=String(Number(el.textContent)+1);}

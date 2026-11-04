@@ -8,15 +8,15 @@
 </style>
 </head>
 <body><main>
-<header><small>PAGE AGENT · 客户使用指南</small><h1>Windows 与 Mac 免安装版使用说明</h1><p>解压 → 生成本机配置 → 加载插件 → 接入 MCP → 验证连接</p><p class="muted">文档更新：2026 年 10 月 16 日。适用交付包：Windows x64、macOS Apple 芯片 / Intel v0.10.51（内置 MCP 服务 v0.10.11）。文档可直接双击离线阅读，不需要联网加载字体或脚本。</p></header>
+<header><small>PAGE AGENT · 客户使用指南</small><h1>Windows 与 Mac 免安装版使用说明</h1><p>解压 → 生成本机配置 → 加载插件 → 接入 MCP → 验证连接</p><p class="muted">文档更新：2026 年 10 月 30 日。适用交付包：Windows x64、macOS Apple 芯片 / Intel v0.10.70（内置 MCP 服务 v0.10.19）。文档可直接双击离线阅读，不需要联网加载字体或脚本。</p></header>
 <div class="note"><strong>您不需要安装 Node.js、npm 或其他依赖，也不需要执行构建命令、填写电脑路径。</strong><br>启动文件会使用包内运行时，生成适合当前电脑的 MCP 配置，并尝试复制到剪贴板。客户只需把配置导入 MCP 客户端。首次使用仍需手动加载 Chrome 插件。</div>
 <nav aria-label="目录"><a href="#choose">选择版本</a><a href="#extract">解压</a><a href="#setup">生成配置</a><a href="#extension">加载插件</a><a href="#mcp">接入 MCP</a><a href="#verify">验证连接</a><a href="#features">页面操作</a><a href="#selector-dynamic">Selector 与动态页面</a><a href="#calendar-datetime">日历时分秒与活动参数</a><a href="#recording-events">新增事件录制</a><a href="#rename-workflow">工作流重命名</a><a href="#table-fill">表格填充</a><a href="#faq">常见问题</a><a href="#support">联系支持</a></nav>
 
 <h2 id="choose">一、选择与电脑匹配的安装包</h2>
 <table><thead><tr><th>电脑类型</th><th>压缩包名称</th><th>双击启动文件</th></tr></thead><tbody>
-<tr><td>Windows x64</td><td><code>Page-Agent-0.10.51-Windows-x64.zip</code></td><td><code>Setup.cmd</code></td></tr>
-<tr><td>Apple 芯片 Mac（M 系列）</td><td><code>Page-Agent-0.10.51-macOS-arm64.zip</code></td><td><code>Setup.command</code></td></tr>
-<tr><td>Intel Mac</td><td><code>Page-Agent-0.10.51-macOS-x64.zip</code></td><td><code>Setup.command</code></td></tr>
+<tr><td>Windows x64</td><td><code>Page-Agent-0.10.70-Windows-x64.zip</code></td><td><code>Setup.cmd</code></td></tr>
+<tr><td>Apple 芯片 Mac（M 系列）</td><td><code>Page-Agent-0.10.70-macOS-arm64.zip</code></td><td><code>Setup.command</code></td></tr>
+<tr><td>Intel Mac</td><td><code>Page-Agent-0.10.70-macOS-x64.zip</code></td><td><code>Setup.command</code></td></tr>
 </tbody></table>
 <p>Mac 可在苹果菜单的“关于本机”中查看芯片/处理器；Windows 可在系统“关于”中查看系统类型。这里的 Windows 包面向 x64 电脑，Windows ARM 电脑请先联系交付人员确认匹配版本。系统是否支持包内运行时，如有疑问请联系支持人员，不要自行更换包内程序。</p>
 
@@ -41,17 +41,18 @@
 <p>如果已经有本机可用的 <code>page-agent-mcp.json</code>，可在插件 MCP 设置里点击<strong>导入本机 MCP 配置</strong>选择该文件，不需要再手动填写路径。v0.10.40 起，Setup 生成的配置优先于旧保存值和旧服务路径；明确导入或保存的配置会保留，切换到具有不同 Setup 路径的新包后会采用新包配置。服务报告的运行路径单独展示，不会覆盖本机配置。导入文件不会替您修改 Agent 客户端配置，仍需按第五节导入客户端。</p>
 <h3>升级用户：为什么运行了新 Setup，仍看到旧版本目录？</h3>
 <p>Setup 生成文件、Chrome 加载的扩展目录、Agent 客户端保存的配置、后台共享桥接是四个不同环节。Setup 只更新所在包的文件，不会自动切换 Chrome 目录、修改其他客户端或终止旧服务。v0.10.40 已修复旧服务覆盖新路径的问题；当服务与配置路径不同，MCP 面板会明确提示，并保留下方新配置 JSON。</p>
-<ol><li>先在原插件导出重要工作流备份；不要直接卸载原扩展，卸载会清除其本地数据。不同解压路径可能对应不同扩展 ID，工作流不会自动迁移到新扩展。</li><li>运行<strong>新包目录</strong>内的 Setup。窗口会列出包版本、MCP 可执行文件、服务脚本和 Chrome 扩展目录。核对生成的 JSON 是否属于本次解压位置，而不是只看剪贴板或旧客户端界面。</li><li>在 Chrome 扩展“详细信息”中核对加载目录。原扩展的<strong>重新加载不会切换目录</strong>。如需加载新包，请选择新包的 extension 目录，暂时禁用旧扩展避免操作错误实例，并核对侧栏版本为 0.10.51。需要时导入已备份的工作流，使用新实例的运行 Prompt。</li><li>将新包生成的 JSON 重新导入<strong>每个</strong> MCP 客户端，保存并重连。只有插件内导入配置，不等于客户端已切换。</li><li>如果 MCP 面板仍提示当前服务是旧路径，说明旧共享桥接仍驻留。先确认没有工作流运行，再由管理员按面板显示的脚本完整路径识别并停止<strong>旧 Page Agent 桥接</strong>，然后重连客户端。不要结束所有 Node 进程；插件不会自行抢占或中断其他客户端。</li></ol>
+<ol><li>先在原插件导出重要工作流备份；不要直接卸载原扩展，卸载会清除其本地数据。不同解压路径可能对应不同扩展 ID，工作流不会自动迁移到新扩展。</li><li>运行<strong>新包目录</strong>内的 Setup。窗口会列出包版本、MCP 可执行文件、服务脚本和 Chrome 扩展目录。核对生成的 JSON 是否属于本次解压位置，而不是只看剪贴板或旧客户端界面。</li><li>在 Chrome 扩展“详细信息”中核对加载目录。原扩展的<strong>重新加载不会切换目录</strong>。如需加载新包，请选择新包的 extension 目录，暂时禁用旧扩展避免操作错误实例，并核对侧栏版本为 0.10.70。需要时导入已备份的工作流，使用新实例的运行 Prompt。</li><li>将新包生成的 JSON 重新导入<strong>每个</strong> MCP 客户端，保存并重连。只有插件内导入配置，不等于客户端已切换。</li><li>如果 MCP 面板仍提示当前服务是旧路径，说明旧共享桥接仍驻留。先确认没有工作流运行，再由管理员按面板显示的脚本完整路径识别并停止<strong>旧 Page Agent 桥接</strong>，然后重连客户端。不要结束所有 Node 进程；插件不会自行抢占或中断其他客户端。</li></ol>
 <div class="warning"><strong>路径核对：</strong>Setup 生成的 <code>command</code> 必须指向本次解压目录内的 <code>runtime/node.exe</code> 或 <code>runtime/node</code>，<code>args[0]</code> 必须指向同一目录内的 <code>mcp-server/dist/index.js</code>。不要复制其他版本的 JSON，也不要把旧包路径手动拼进新配置。插件的“当前服务脚本”是运行状态，下面可复制的 JSON 是准备使用的配置；两者不一致时，新 JSON 不会被旧服务覆盖。插件未获取本机配置时显示“尚未配置”，不显示占位目录。</div>
-<p><strong>本次 v0.10.51 交付的路径规则：</strong>压缩包不携带构建电脑生成的配置文件；Setup 依据自身所在的真实目录重新生成两个 JSON 文件，不会沿用系统 Node 或旧包的可执行文件路径。重新运行 Setup 会更新本包配置及配置修订标识；重新加载本包插件后会读取新配置，而不是继续使用上次保存的旧路径。不能在打包时预填客户未来的解压位置，必须在客户电脑运行本包 Setup 后才能得到该电脑的实际绝对路径。</p>
+<p><strong>本次 v0.10.70 交付的路径规则：</strong>压缩包不携带构建电脑生成的配置文件；Setup 依据自身所在的真实目录重新生成两个 JSON 文件，不会沿用系统 Node 或旧包的可执行文件路径。重新运行 Setup 会更新本包配置及配置修订标识；重新加载本包插件后会读取新配置，而不是继续使用上次保存的旧路径。不能在打包时预填客户未来的解压位置，必须在客户电脑运行本包 Setup 后才能得到该电脑的实际绝对路径。</p>
 <p>目录名中含旧版本号本身不代表程序仍是旧版：如果您是在原目录覆盖更新，应同时核对实际加载版本、Setup 输出与客户端路径。未升级的旧扩展不会因运行新 Setup 自动获得 v0.10.40 的修复。</p>
 <div class="warning">交付包尚未整体签名或公证。如系统、杀毒软件或企业策略阻止运行，请联系 IT 管理员或交付人员审核。不要关闭防火墙、安全防护，也不要执行网上提供的绕过安全检查命令。一般不需要管理员权限。</div>
 
 <h2 id="extension">四、首次加载 Chrome 插件</h2>
-<ol><li>打开 Chrome，在地址栏输入 <code>chrome://extensions</code>。</li><li>开启扩展管理页右上角的<strong>开发者模式</strong>。如企业不允许开启，请联系管理员按企业扩展策略部署。</li><li>点击<strong>加载已解压的扩展程序</strong>，选择解压目录里面的 <code>extension</code> 文件夹。不要选择 ZIP、整个交付目录或 <code>mcp-server</code>。</li><li>确认扩展列表出现“Page Agent”，并保持启用。可在 Chrome 扩展菜单将其固定，点击图标打开侧栏。</li><li>确认侧栏显示的实际加载版本：Windows 和 Mac 均为 <code>0.10.51</code>。如尚未连接 MCP，此时显示未连接是正常的，请继续下一节。</li></ol>
+<ol><li>打开 Chrome，在地址栏输入 <code>chrome://extensions</code>。</li><li>开启扩展管理页右上角的<strong>开发者模式</strong>。如企业不允许开启，请联系管理员按企业扩展策略部署。</li><li>点击<strong>加载已解压的扩展程序</strong>，选择解压目录里面的 <code>extension</code> 文件夹。不要选择 ZIP、整个交付目录或 <code>mcp-server</code>。</li><li>确认扩展列表出现“Page Agent”，并保持启用。可在 Chrome 扩展菜单将其固定，点击图标打开侧栏。</li><li>确认侧栏显示的实际加载版本：Windows 和 Mac 均为 <code>0.10.70</code>。如尚未连接 MCP，此时显示未连接是正常的，请继续下一节。</li></ol>
 <p>首次运行网页工作流前，打开目标业务页面并完成登录。更新或首次加载插件后，建议刷新目标业务页面，让新的页面脚本生效。无痕窗口、Chrome 内部页面、应用商店等受限页面可能不可操作；请先在普通窗口的 HTTP/HTTPS 网页上验证。</p>
 
 <h2 id="mcp">五、把配置导入 MCP 客户端</h2>
+<div class="note"><strong>插件内一键配置与启动</strong><ol><li>首次双击完整安装包内 Setup，它会自动注册启动器并写入本机配置。</li><li>Chrome 加载同目录的 extension，打开插件 MCP 页面，点击“配置并启动”。</li></ol>无需在插件内导入文件、填写路径或复制终端命令。同目录删除重加插件无需重新注册；移动或升级目录后重新双击该目录 Setup。模型客户端仍需按下文单独启用 MCP 配置。</div>
 <p>MCP 客户端是您使用的 Agent/AI 工具。不同客户端的菜单名称可能不同，请进入它的 <strong>MCP / 工具 / 连接器 / 服务配置</strong>设置区域，选择以下一种方式。这里不需要 HTTP 服务地址，也不需要填写 WebSocket 地址。</p>
 <table><thead><tr><th>客户端提供的入口</th><th>操作方法</th></tr></thead><tbody>
 <tr><td>“导入 JSON / 导入配置文件”</td><td>选择当前电脑刚生成的 <code>page-agent-mcp.json</code>。</td></tr>
@@ -133,8 +134,8 @@
 <div class="note">验收以网页实际结果为准。例如点击“去选择”后应出现“选择品牌/类目”抽屉；不能仅凭日志写着“已捕获 click”就认为业务操作成功。运行结果中的 <code>runId</code> 可用于支持排查；涉及提交、下载等副作用时不要盲目重跑。</div>
 
 
-<h3 id="calendar-datetime">8. 日历时分秒选择与活动起止参数（v0.10.51）</h3>
-<p>带小时、分钟、秒的活动时间，请使用<strong>日历节点的区间模式</strong>，不要拆成两个普通输入节点。v0.10.51 增加独立的 Fusion Next 日期时间区间适配：点击日期格、分别点击两端的时/分/秒选项，再点击<strong>日历弹层内部的“确定”</strong>，最后同时核验主表单起止实际值。仅日期格式 <code>YYYY-MM-DD</code> 仍走原有日期选择路径，旧工作流不需要为了本次升级修改格式。</p>
+<h3 id="calendar-datetime">8. 日历时分秒选择与活动起止参数（v0.10.69）</h3>
+<p>带小时、分钟、秒的活动时间，请使用<strong>日历节点的区间模式</strong>，不要拆成两个普通输入节点。v0.10.69 增加独立的 Fusion Next 日期时间区间适配：点击日期格、分别点击两端的时/分/秒选项，再点击<strong>日历弹层内部的“确定”</strong>，最后同时核验主表单起止实际值。仅日期格式 <code>YYYY-MM-DD</code> 仍走原有日期选择路径，旧工作流不需要为了本次升级修改格式。</p>
 <div class="note"><strong>支持范围：</strong>新增时分秒能力当前针对 Fusion Next 日期时间区间控件，不代表所有网站的时间控件都已适配。控件不支持、归属不唯一、日期/时间被禁用、起止值错误或被回滚时明确失败，不会忽略时间、移除禁用状态或只凭点击事件报成功。</div>
 <h4>配置步骤</h4>
 <ol>

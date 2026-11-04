@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { NODE_KIND_LABELS, NODE_KIND_ENGLISH } from '@/types/workflow';
 export const NODE_CHOICES = [
   ['dom', '⌖'], ['query', '⌕'], ['output', '↗'], ['dialog', '▢'], ['watch', '◉'],
-  ['request', '⇢'], ['tableFill', '▤'], ['datatable', '▤'], ['screenshot', '▣'], ['email', '✉'],
+  ['request', '⇢'], ['tableFill', '▤'], ['datatable', '▤'], ['screenshot', '▣'], ['mediaRecording', '⏺'], ['email', '✉'],
   ['calendar', '▦'], ['pagination', '⇄'], ['ai', '✦'], ['loop', '↻'], ['wait', '◷'],
 ] as const;
 export type CreatableNodeKind = typeof NODE_CHOICES[number][0];

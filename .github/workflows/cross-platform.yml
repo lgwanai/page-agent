@@ -20,6 +20,12 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run build
+      - name: Validate generated user handbook
+        if: runner.os == 'Linux'
+        run: |
+          npm run docs:build
+          npm run docs:check
+          git diff --exit-code -- docs/user-manual.html docs/customer-portable-guide.html docs/manual-build.json
       - if: runner.os == 'Linux'
         run: npx playwright install --with-deps chromium
       - if: runner.os == 'Linux'

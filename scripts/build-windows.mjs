@@ -1,6 +1,6 @@
 // Release-builder only. The resulting customer package requires neither npm nor installed Node.
 import { createHash } from 'node:crypto';
-import { createWriteStream } from 'node:fs';
+import { createWriteStream, existsSync } from 'node:fs';
 import { readFile, writeFile, mkdir, cp, mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve, join, dirname } from 'node:path';
@@ -46,8 +46,18 @@ run('mcp:build');
 run('build', { PAGE_AGENT_PORTABLE: '1' });
 await cp(join(root, 'dist'), join(bundle, 'extension'), { recursive: true });
 await cp(join(root, 'mcp-server', 'dist'), join(bundle, 'mcp-server', 'dist'), { recursive: true });
-// Keep the complete installed dependency tree to preserve ESM, optional dependencies and licenses.
-await cp(join(root, 'mcp-server', 'node_modules'), join(bundle, 'mcp-server', 'node_modules'), { recursive: true });
+// Match the macOS release: ship locked production packages and their licenses,
+// excluding build tools and build-host native modules (e.g. Darwin fsevents).
+const lock = JSON.parse(await readFile(join(root, 'mcp-server', 'package-lock.json'), 'utf8'));
+for (const [path, metadata] of Object.entries(lock.packages)) {
+  if (!path.startsWith('node_modules/') || metadata.dev) continue;
+  const source = join(root, 'mcp-server', path);
+  if (!existsSync(source)) {
+    if (metadata.optional) continue;
+    throw new Error(`Missing production dependency: ${path}`);
+  }
+  await cp(source, join(bundle, 'mcp-server', path), { recursive: true });
+}
 await cp(join(root, 'mcp-server', 'package.json'), join(bundle, 'mcp-server', 'package.json'));
 await cp(join(root, 'scripts', 'portable-setup.mjs'), join(bundle, 'setup.mjs'));
 await cp(join(root, 'scripts', 'windows-setup.cmd'), join(bundle, 'Setup.cmd'));
@@ -55,7 +65,7 @@ await writeCustomerGuide(bundle);
 await writeFile(join(bundle, 'README.txt'), '\ufeff' + [
   `Page Agent ${version} — Windows ${arch} 免安装版`, '',
   '1. 将整个压缩包解压到固定目录（支持空格和中文路径），不要直接在压缩包内运行。',
-  '2. 双击 Setup.cmd，自动生成 page-agent-mcp.json 并复制配置到剪贴板。',
+  '2. 双击 Setup.cmd，自动注册本机启动器并写入配置。插件 MCP 页面点击「配置并启动」即可，无需手动导入文件或复制命令。',
   '3. 在 MCP 客户端导入 JSON 或粘贴配置。不会自动修改或覆盖其他客户端的配置。',
   '4. Chrome 扩展管理页开启开发者模式，加载已解压的扩展，选择 extension 文件夹。',
   '无需安装 Node、npm、依赖或构建代码。',

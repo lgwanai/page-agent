@@ -4,19 +4,26 @@ import type { WorkflowNode } from '@/types/workflow';
 import { loadWorkspace, replaceWorkspace, renameWorkflow, deleteWorkflow, restoreWorkflow, updateWorkflowTags, purgeWorkflow } from '@/shared/storage';
 import { loadProvider, saveProvider } from '@/shared/provider-storage';
 import { testProvider } from './ai-provider';
-import { connectBridge, getMcpConnectionInfo, isBridgeConnected, retryMcpConnection } from './bridge';
+import { connectBridge, getMcpConnectionInfo, isBridgeConnected, retryMcpConnection, startMcpServer, configureAndStartMcpServer } from './bridge';
 import { runAction, runGraph, runNodes, runScript } from './runner';
 import { sendSelectorToFrames } from './selector-messaging';
 import { selectedPageTarget } from './selection-target';
 import { acknowledgeRecording, appendRecordedEvent, getRecordingState, recordingForFrame, resumeRecordingOverlay, startPageRecording, stopPageRecording } from './recording';
 import { ensureWorkflowKeys, ensureWorkflowKey, rotateWorkflowKey } from '@/shared/workflow-keys';
 import { getInstanceId } from '@/shared/instance';
+import { handleMediaRecordingMessage, saveMediaRecording } from './media-recording';
 import { saveMcpOptions } from '@/shared/mcp-config';
 
 chrome.runtime.onInstalled.addListener(() => {
-  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => undefined);
+  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch(() => undefined);
   connectBridge();
 });
+// The implicit side-panel action path does not grant activeTab for tabCapture.
+// Handle the toolbar action explicitly so Chrome grants the target tab access.
+chrome.action.onClicked.addListener(tab => {
+  if (tab.id !== undefined) void chrome.sidePanel.open({ tabId: tab.id }).catch(() => undefined);
+});
+void chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch(() => undefined);
 chrome.runtime.onStartup.addListener(connectBridge);
 connectBridge();
 
@@ -61,6 +68,16 @@ async function sendAllFrames(message: RuntimeMessage): Promise<void> {
 }
 
 chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendResponse) => {
+  if (message.type === 'PAGE_AGENT_MEDIA_READY') {
+    if (sender.url !== chrome.runtime.getURL('src/offscreen/recorder.html')) return false;
+    void saveMediaRecording(message.id).then(result => sendResponse({ ok: true, result })).catch((error: Error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+  if (message.type === 'PAGE_AGENT_MEDIA_RECORDING') {
+    if (sender.tab && !sender.url?.startsWith(chrome.runtime.getURL(''))) { sendResponse({ ok: false, error: '网页录制只能由插件界面控制' }); return false; }
+    void handleMediaRecordingMessage(message).then(result => sendResponse({ ok: true, result })).catch((error: Error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
   if (message.type === 'PAGE_AGENT_COMPONENT_VERSIONS') {
     void getActiveTab().then(async tab => {
       const frames = await chrome.webNavigation.getAllFrames({ tabId: tab.id! });
@@ -81,12 +98,23 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendRespo
       .catch((error: Error) => sendResponse({ ok: false, error: error.message }));
     return true;
   }
+  if (message.type === 'PAGE_AGENT_SETUP_MCP') {
+    void configureAndStartMcpServer().then(result => sendResponse({ ok: true, result }))
+      .catch((error: Error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+  if (message.type === 'PAGE_AGENT_START_MCP') {
+    void startMcpServer().then(getMcpConnectionInfo).then(result => sendResponse({ ok: true, result }))
+      .catch((error: Error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
   if (message.type === 'PAGE_AGENT_SAVE_MCP_OPTIONS') {
     void saveMcpOptions(message.options).then(() => sendResponse({ ok: true }))
       .catch((error: Error) => sendResponse({ ok: false, error: error.message }));
     return true;
   }
   if (message.type === 'PAGE_AGENT_GET_INSTANCE') {
+    if (!isBridgeConnected()) void connectBridge();
     void getInstanceId().then((instanceId) => sendResponse({ ok: true, result: { instanceId, connected: isBridgeConnected() } }))
       .catch((error: Error) => sendResponse({ ok: false, error: error.message }));
     return true;

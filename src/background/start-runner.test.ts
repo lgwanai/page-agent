@@ -58,6 +58,17 @@ describe('Start always opens its configured URL', () => {
     expect(navigateToStartUrl).not.toHaveBeenCalled();
     expect(JSON.stringify(result)).toContain('view=wrong');
   });
+  it.each(['run', 'debug'])('starts immediately on an explicitly reused streaming page with a pending frame (%s)', async mode => {
+    const { start } = setup('https://live.douyin.com/127453393722');
+    vi.mocked(chrome.tabs.get).mockResolvedValue({ id: 1, url: 'https://live.douyin.com/127453393722', status: 'loading' } as chrome.tabs.Tab);
+    Object.assign(chrome.tabs, { onUpdated: { addListener: vi.fn(), removeListener: vi.fn() }, onRemoved: { addListener: vi.fn(), removeListener: vi.fn() } });
+    const node = { ...start, keepCurrentPage: true, loadTimeoutMs: 10 };
+    const result = mode === 'run' ? await runGraph([node], []) : await debugNode([node], node.id, {});
+    expect(result.ok).toBe(true);
+    expect(result.steps[0].data).toMatchObject({ navigated: false, url: 'https://live.douyin.com/127453393722' });
+    expect(chrome.tabs.onRemoved.addListener).not.toHaveBeenCalled();
+    expect(navigateToStartUrl).not.toHaveBeenCalled();
+  });
   it('emits live start and completed progress before returning the result', async () => {
     const { start } = setup();
     const progress = vi.fn();

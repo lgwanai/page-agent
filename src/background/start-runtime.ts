@@ -91,7 +91,10 @@ export async function prepareStart(
     // A configured Start URL means open it on EVERY run; only an empty URL reuses the page.
     tab = await navigateToStartUrl(tabId, targetUrl, loadTimeout, previousUrl, executionSignal());
     navigated = true;
-  } else if (tab.status !== 'complete') {
+  } else if (!node.keepCurrentPage && tab.status !== 'complete') {
+    // Explicit reuse targets an already prepared page, including playing live
+    // pages whose third-party frames can keep Chrome's tab status loading.
+    // Subsequent DOM nodes still validate their actual business controls.
     tab = await waitForTab(tabId, (candidate) => candidate.status === 'complete', loadTimeout, '当前页面加载超时');
   }
 

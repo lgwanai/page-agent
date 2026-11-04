@@ -30,6 +30,7 @@ import { validateMediaNode } from '@/shared/media-nodes';
 import { dataTableExcel } from '@/shared/datatable-excel';
 import { outputBusinessOk, outputPath, validateOutputNode } from '@/shared/output';
 import { executeRequest } from './request';
+import { executeMediaRecording } from './media-recording-node';
 
 type Variables = Record<string, unknown>;
 type RuntimeContext = Record<string, unknown>;
@@ -121,6 +122,10 @@ async function executeAtomic(
     await budget.upgrades?.prepare(tabId, node, resolvedFrameUrl);
     if (target && resolved.frameUrl !== target.frameUrl) node = { ...node, target: { ...target, frameUrl: resolved.frameUrl } } as typeof node;
   } else await budget.upgrades?.prepare(tabId, node);
+  if (node.kind === 'mediaRecording') {
+    const data = await executeMediaRecording(tabId, node, variables, context);
+    return { data, port: 'success', verification: { ok: true, summary: data.state === 'saved' ? `录制已保存：${Math.round(data.durationMs / 1000)} 秒 · ${data.fileName}${data.audibleSamples ? '' : '（未检测到声音）'}` : `${node.action === 'record' || node.action === 'start' ? '异步录屏已启动，使用 statusUrl 查询完成结果' : '网页录制状态'}：${data.state}`, actual: data } };
+  }
   if (node.kind === 'output') {
     validateOutputNode(node);
     let data: unknown;

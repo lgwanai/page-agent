@@ -30,7 +30,7 @@
             "required": ["id", "kind", "name"],
             "properties": {
               "id": { "type": "string", "minLength": 1 },
-              "kind": { "enum": ["start", "dom", "dialog", "query", "output", "watch", "screenshot", "datatable", "tableFill", "email", "calendar", "pagination", "ai", "action", "wait", "loop", "request"] },
+              "kind": { "enum": ["start", "dom", "dialog", "query", "output", "watch", "screenshot", "mediaRecording", "datatable", "tableFill", "email", "calendar", "pagination", "ai", "action", "wait", "loop", "request"] },
               "body": { "$ref": "#/$defs/workflowBody" },
               "event": { "$ref": "#/$defs/webEvent" },
               "keepCurrentPage": { "type": "boolean", "description": "Start 保持当前页面，不导航或刷新；忽略目标 URL 校验" },
@@ -90,6 +90,18 @@
                   "mode": { "enum": ["viewport", "fullPage", "region"] },
                   "fileName": { "type": "string" },
                   "region": { "type": "object", "required": ["x", "y", "width", "height"], "properties": { "x": { "type": "number", "minimum": 0 }, "y": { "type": "number", "minimum": 0 }, "width": { "type": "number", "exclusiveMinimum": 0 }, "height": { "type": "number", "exclusiveMinimum": 0 } } }
+                }
+              }
+            }, {
+              "if": { "properties": { "kind": { "const": "mediaRecording" } } },
+              "then": {
+                "required": ["action", "mode", "durationMs", "fileName"],
+                "properties": {
+                  "action": { "enum": ["record", "start", "stop", "status"] },
+                  "mode": { "enum": ["videoAudio", "audio"] },
+                  "durationMs": { "type": "integer", "minimum": 1000, "maximum": 1800000 },
+                  "fileName": { "type": "string" },
+                  "recordingId": { "type": "string" }
                 }
               }
             }, {

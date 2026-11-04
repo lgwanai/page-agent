@@ -11,7 +11,8 @@ if ! "$SCRIPT_DIR/runtime/node" "$SCRIPT_DIR/setup.mjs" "$@"; then
 fi
 echo ''
 echo 'Chrome：打开 chrome://extensions，开启开发者模式，加载本目录的 extension 文件夹。'
-echo 'MCP：导入本目录 page-agent-mcp.json，或粘贴剪贴板中的配置。'
+echo 'MCP：打开插件 MCP 页面，点击「配置并启动」即可，无需导入文件或执行命令。'
+echo '如需模型客户端调用，再将 page-agent-mcp.json 导入对应客户端。'
 if [ -t 0 ]; then
   read -r -p '按回车关闭窗口…' unused
 fi

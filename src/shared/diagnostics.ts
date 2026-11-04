@@ -10,6 +10,8 @@ export interface Diagnostic {
 
 type DiagnosticContext = Record<string, unknown> & { phase?: string };
 const RULES: Array<[RegExp, string, string, Diagnostic['retryPolicy'], string[]]> = [
+  [/未取得网页录制权限/, 'MEDIA_RECORDING_PERMISSION_REQUIRED', 'authorization', 'after_fix', ['在目标直播页点击工具栏 Page Agent 图标再录制；开始节点保持当前页面，MCP 不会自动取得录制权限。']],
+  [/网页录制|录制分块|录制文件|已有录制/, 'MEDIA_RECORDING_FAILED', 'recording', 'inspect_before_retry', ['检查录制状态、目标标签页、播放器静音状态及浏览器下载记录；已产生的文件和分块不要重复录制或覆盖。']],
   [/请求节点配置无效|请求 URL|请求头|GET \/ HEAD 请求/, 'HTTP_REQUEST_CONFIG_INVALID', 'configuration', 'after_fix', ['检查 HTTP/HTTPS URL、请求方法、JSON 请求头及变量；GET/HEAD 的请求体应为空。']],
   [/请求失败：HTTP|请求成功，但响应不是有效的 JSON/, 'HTTP_RESPONSE_INVALID', 'verification', 'inspect_before_retry', ['检查服务器状态码和实际响应类型。服务器已经处理请求，尤其是写入操作，不要自动重发。']],
   [/请求超时|网络请求失败/, 'HTTP_REQUEST_OUTCOME_UNKNOWN', 'execution', 'inspect_before_retry', ['检查链接、网络、服务器记录和超时配置；服务器可能已处理请求，确认结果后再决定是否重新运行。']],

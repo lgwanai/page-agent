@@ -1,9 +1,11 @@
+import { isBridgeListening } from './bridge-readiness';
+import { launchMcpServer } from './mcp-launcher';
 import type { UploadFilePath } from '@/shared/upload';
 import { loadWorkspace, replaceWorkspace } from '@/shared/storage';
 import { runAction, runScript } from './runner';
 import { ensureWorkflowKeys, verifyWorkflowKey } from '@/shared/workflow-keys';
 import { getInstanceId } from '@/shared/instance';
-import { loadMcpConfiguration, mcpOptionsError, sameMcpOptions } from '@/shared/mcp-config';
+import { loadMcpConfiguration, mcpOptionsError, sameMcpOptions, saveMcpOptions } from '@/shared/mcp-config';
 import type { McpClientOptions } from '@/types/mcp';
 
 let serverVersion: string | undefined;
@@ -12,12 +14,32 @@ let liveMcpOptions: McpClientOptions | undefined;
 import { MCP_BRIDGE_URL, type McpConnectionInfo } from '@/types/mcp';
 import { AUTHORING_METHODS, handleAuthoring } from './authoring';
 import { diagnose } from '@/shared/diagnostics';
+import type { MediaRecordingResult, RecordingTaskReceipt } from '@/shared/media-recording';
+import { configureRecordingTaskBridge } from './recording-task-bridge';
+import { pollMediaRecording, republishRecordingTasks } from './media-recording';
 
 let socket: WebSocket | null = null;
+let connectionCheck: Promise<void> | undefined;
 let retryTimer: number | undefined;
 let retryDelay = 1000;
 let bridgeConnected = false;
 let bridgeError: string | undefined;
+let autoStartAttempted = false;
+let serverStarting: Promise<void> | undefined;
+let launcherError: string | undefined;
+const recordingTaskPending = new Map<string, { resolve: (value: RecordingTaskReceipt) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
+function registerRecordingTask(result: MediaRecordingResult, requireFullDuration: boolean, requestedDurationMs: number): Promise<RecordingTaskReceipt> {
+  if (!socket || socket.readyState !== WebSocket.OPEN) return Promise.reject(new Error('录屏任务服务已断开'));
+  const id = crypto.randomUUID();
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { recordingTaskPending.delete(id); reject(new Error('录屏状态 URL 注册超时，已停止本次录制')); }, 5000);
+    recordingTaskPending.set(id, { resolve, reject, timer });
+    socket!.send(JSON.stringify({ type: 'register_media_recording_task', id, result, requireFullDuration, requestedDurationMs }));
+  });
+}
+function publishRecordingResult(result: MediaRecordingResult): void {
+  if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'media_recording_task_update', result }));
+}
 const mailPending = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
 let mailAvailable = false;
 export function sendEmailViaBridge(config: unknown, message: unknown): Promise<unknown> {
@@ -47,8 +69,8 @@ export async function getMcpConnectionInfo(): Promise<McpConnectionInfo> {
   const hasConfigured = !mcpOptionsError(configured.options);
   return {
     instanceId: await getInstanceId(), connected: bridgeConnected,
-    connecting: socket?.readyState === WebSocket.CONNECTING,
-    bridgeUrl: MCP_BRIDGE_URL, error: bridgeError,
+    connecting: Boolean(connectionCheck) || socket?.readyState === WebSocket.CONNECTING,
+    bridgeUrl: MCP_BRIDGE_URL, error: bridgeError, launcherError, serverStarting: Boolean(serverStarting),
     clientOptions: hasConfigured ? configured.options : liveMcpOptions ?? configured.options,
     clientOptionsSource: hasConfigured ? configured.source : liveMcpOptions ? 'service' : 'unconfigured',
     runningClientOptions: liveMcpOptions, serverVersion, protocolVersion,
@@ -57,12 +79,55 @@ export async function getMcpConnectionInfo(): Promise<McpConnectionInfo> {
 }
 
 /** Retry a failed connection without interrupting an already-connected workflow. */
-export function retryMcpConnection(): void {
-  if (socket?.readyState === WebSocket.OPEN || socket?.readyState === WebSocket.CONNECTING) return;
+export function retryMcpConnection(): Promise<void> {
+  if (socket?.readyState === WebSocket.OPEN || socket?.readyState === WebSocket.CONNECTING) return Promise.resolve();
   if (retryTimer !== undefined) self.clearTimeout(retryTimer);
   retryTimer = undefined;
   retryDelay = 1000;
-  connectBridge();
+  return connectBridge();
+}
+
+/** Ensure the local broker is running; a healthy connection is never restarted. */
+export function startMcpServer(): Promise<void> {
+  if (bridgeConnected) return Promise.resolve();
+  if (serverStarting) return serverStarting;
+  autoStartAttempted = true;
+  launcherError = undefined;
+  serverStarting = launchMcpServer().then(async (options) => {
+    const configured = await loadMcpConfiguration();
+    // Keep this extension's Setup configuration and deliberate overrides. The
+    // registered host may belong to another package/profile; do not replace them.
+    if (options && configured.source === 'unconfigured') await saveMcpOptions(options);
+    // Let an initial readiness probe finish before retrying its failed check.
+    await connectionCheck;
+    await retryMcpConnection();
+  }).catch((error: Error) => {
+    launcherError = error.message;
+    throw error;
+  }).finally(() => { serverStarting = undefined; notifyStatus(bridgeConnected, bridgeError); });
+  notifyStatus(bridgeConnected, bridgeError);
+  return serverStarting;
+}
+/** One user action succeeds only after both a live connection and valid paths. */
+export async function configureAndStartMcpServer(): Promise<McpConnectionInfo> {
+  await startMcpServer();
+  const deadline = Date.now() + 8000;
+  while (!bridgeConnected && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 100));
+  if (!bridgeConnected) throw new Error('本机启动器已响应，但插件仍未连接服务。请确认 Chrome 加载的是运行 Setup 的安装包内 extension 目录，再点击重试。');
+  let info = await getMcpConnectionInfo();
+  if (info.clientOptionsSource === 'service' && !mcpOptionsError(info.clientOptions)) {
+    await saveMcpOptions(info.clientOptions);
+    info = await getMcpConnectionInfo();
+  }
+  if (info.configurationMismatch) throw new Error('当前连接的服务来自其他安装目录，尚未完成本次配置。请展开高级设置核对路径；确认没有工作流运行后关闭旧服务，再重新配置并启动。');
+  const issue = mcpOptionsError(info.clientOptions);
+  if (issue) throw new Error('已连接服务，但没有获得有效的本机配置。请双击新安装包中的 Setup 后重试。');
+  return info;
+}
+
+function autoStartMcpServer(): void {
+  if (autoStartAttempted || !chrome.runtime.sendNativeMessage) return;
+  void startMcpServer().catch(() => undefined);
 }
 
 interface BridgeRequest {
@@ -93,6 +158,7 @@ export async function handleBridgeRequest(request: BridgeRequest): Promise<unkno
   const params = request.params ?? {};
   if (AUTHORING_METHODS.includes(request.method)) return handleAuthoring(request.method, params);
   switch (request.method) {
+    case 'recording_status': return pollMediaRecording(String(params.recordingId ?? ''));
     case 'ping': return { name: 'Page Agent', instanceId, version: chrome.runtime.getManifest().version };
     case 'get_state': return loadWorkspace();
     case 'set_state': {
@@ -133,7 +199,7 @@ export async function handleBridgeRequest(request: BridgeRequest): Promise<unkno
 function notifyStatus(connected: boolean, error?: string): void {
   bridgeConnected = connected;
   bridgeError = error;
-  chrome.runtime.sendMessage({ type: 'PAGE_AGENT_BRIDGE_STATUS', connected, connecting: socket?.readyState === WebSocket.CONNECTING, error }).catch(() => undefined);
+  chrome.runtime.sendMessage({ type: 'PAGE_AGENT_BRIDGE_STATUS', connected, connecting: Boolean(connectionCheck) || socket?.readyState === WebSocket.CONNECTING, error }).catch(() => undefined);
 }
 
 function scheduleReconnect(): void {
@@ -145,7 +211,26 @@ function scheduleReconnect(): void {
   retryDelay = Math.min(retryDelay * 2, 30_000);
 }
 
-export function connectBridge(): void {
+/** Check availability first; never probe a stopped service with a WebSocket. */
+export function connectBridge(): Promise<void> {
+  if (socket?.readyState === WebSocket.OPEN || socket?.readyState === WebSocket.CONNECTING) return Promise.resolve();
+  if (connectionCheck) return connectionCheck;
+  connectionCheck = (async () => {
+    if (await isBridgeListening()) { openBridgeSocket(); return; }
+    notifyStatus(false, '本机 MCP 服务尚未启动。可在 MCP 页面点击「配置并启动」；首次使用请先运行完整安装包中的 Setup。');
+    scheduleReconnect();
+    autoStartMcpServer();
+  })().catch((error: Error) => {
+    notifyStatus(false, error.message);
+    scheduleReconnect();
+  }).finally(() => {
+    connectionCheck = undefined;
+    notifyStatus(bridgeConnected, bridgeError);
+  });
+  return connectionCheck;
+}
+
+function openBridgeSocket(): void {
   if (socket?.readyState === WebSocket.OPEN || socket?.readyState === WebSocket.CONNECTING) return;
   try {
     const connection = new WebSocket(MCP_BRIDGE_URL);
@@ -172,8 +257,23 @@ export function connectBridge(): void {
           uploadAvailable = data.uploadNativePaths === true;
           serverVersion = typeof data.serverVersion === 'string' ? data.serverVersion : undefined;
           protocolVersion = typeof data.protocolVersion === 'number' ? data.protocolVersion : undefined;
+          configureRecordingTaskBridge(data.recordingTasks === true ? registerRecordingTask : undefined, data.recordingTasks === true ? publishRecordingResult : undefined);
+          if (data.recordingTasks === true) void republishRecordingTasks().catch(() => undefined);
           notifyStatus(true);
           if (typeof data.clientOptions?.command === 'string' && typeof data.clientOptions?.serverPath === 'string' && !mcpOptionsError(data.clientOptions)) { liveMcpOptions = data.clientOptions; notifyStatus(true); }
+          return;
+        }
+        if (data.type === 'media_recording_task_result') {
+          const pending = recordingTaskPending.get(data.id); if (!pending) return;
+          clearTimeout(pending.timer); recordingTaskPending.delete(data.id);
+          const value = data.result as RecordingTaskReceipt | undefined;
+          let valid = false;
+          try {
+            const url = new URL(value!.statusUrl);
+            valid = url.origin === `http://${new URL(MCP_BRIDGE_URL).host}` && /^\/recordings\/[A-Za-z0-9_-]{43}$/.test(url.pathname) && !url.search && !url.hash;
+          } catch { /* Invalid receipt is rejected before returning a link to the caller. */ }
+          if (data.ok && value && valid && typeof value.taskId === 'string' && typeof value.expiresAt === 'string' && Number.isFinite(Date.parse(value.expiresAt))) pending.resolve(value);
+          else pending.reject(new Error(data.error || '录屏任务服务没有返回有效的本机状态 URL'));
           return;
         }
         if (data.type === 'upload_file_paths_result') {
@@ -206,12 +306,16 @@ export function connectBridge(): void {
       socket = null;
       liveMcpOptions = undefined; serverVersion = undefined; protocolVersion = undefined;
       mailAvailable = false; uploadAvailable = false;
+      configureRecordingTaskBridge();
+      for (const pending of recordingTaskPending.values()) { clearTimeout(pending.timer); pending.reject(new Error('录屏任务服务断开，已停止尚未取得状态 URL 的录制')); }
+      recordingTaskPending.clear();
       for (const pending of uploadPending.values()) { clearTimeout(pending.timer); pending.reject(new Error('检查文件时本机 MCP 服务断开，尚未向网页上传')); }
       uploadPending.clear();
       for (const pending of mailPending.values()) { clearTimeout(pending.timer); pending.reject(new Error('邮件桥接断开，发送结果可能未知，请检查发件记录，不要自动重发')); }
       mailPending.clear();
       notifyStatus(false, event.reason || '无法连接本机 MCP 服务，或服务已断开。请在 MCP 客户端启动 Page Agent 服务后重试。');
       scheduleReconnect();
+      autoStartMcpServer();
     });
     connection.addEventListener('error', () => connection.close());
   } catch (error) {

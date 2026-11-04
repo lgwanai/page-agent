@@ -1,6 +1,6 @@
 {
   "name": "@page-agent/mcp-server",
-  "version": "0.10.17",
+  "version": "0.10.21",
   "private": true,
   "type": "module",
   "bin": {

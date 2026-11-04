@@ -15,6 +15,9 @@ export default defineConfig({
     }),
   },
   resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
-  build: { outDir: 'dist', sourcemap: true },
+  build: { outDir: 'dist', sourcemap: true, rollupOptions: { input: {
+    recorder: fileURLToPath(new URL('./src/offscreen/recorder.html', import.meta.url)),
+    recorderPrototype: fileURLToPath(new URL('./src/recorder-prototype/index.html', import.meta.url)),
+  } } },
   server: { port: 5173, strictPort: true, hmr: { port: 5174 } },
 });

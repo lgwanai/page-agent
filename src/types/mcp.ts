@@ -8,6 +8,8 @@ export interface McpClientOptions {
 
 export interface McpConnectionInfo {
   serverVersion?: string;
+  serverStarting?: boolean;
+  launcherError?: string;
   protocolVersion?: number;
   instanceId: string;
   connected: boolean;

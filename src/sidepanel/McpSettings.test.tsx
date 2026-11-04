@@ -21,7 +21,7 @@ beforeEach(() => {
   listeners = [];
   send.mockResolvedValue({ ok: true, result: info });
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
-  vi.stubGlobal('chrome', { runtime: { getManifest: () => manifest, sendMessage: send, onMessage: { addListener: (listener: (message: RuntimeMessage) => void) => listeners.push(listener), removeListener: (listener: (message: RuntimeMessage) => void) => { listeners = listeners.filter((item) => item !== listener); } } } });
+  vi.stubGlobal('chrome', { runtime: { id: "abcdefghijklmnopabcdefghijklmnop", getManifest: () => manifest, sendMessage: send, onMessage: { addListener: (listener: (message: RuntimeMessage) => void) => listeners.push(listener), removeListener: (listener: (message: RuntimeMessage) => void) => { listeners = listeners.filter((item) => item !== listener); } } } });
   Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: clipboard.mockResolvedValue(undefined) } });
   container = document.createElement('div');
   document.body.append(container);
@@ -48,6 +48,45 @@ async function change(input: HTMLInputElement, value: string) {
 }
 
 describe('MCP configuration panel', () => {
+  it('offers one-click setup without requiring imported paths and keeps manual setup collapsed', async () => {
+    send.mockResolvedValue({ ok: true, result: { ...info, clientOptions: DEFAULT_MCP_OPTIONS } });
+    await render();
+    expect(button('配置并启动').disabled).toBe(false);
+    expect(container.querySelector<HTMLDetailsElement>('details.mcp-advanced')?.open).toBe(false);
+    expect(container.textContent).toContain('无需导入文件');
+    send.mockResolvedValue({ ok: true, result: { ...info, connected: true } });
+    await act(async () => button('配置并启动').click());
+    expect(send).toHaveBeenCalledWith({ type: 'PAGE_AGENT_SETUP_MCP' });
+    expect(container.querySelector('[role="status"]')?.textContent).toContain('已连接');
+  });
+  it('starts through the native launcher and displays installation guidance on failure', async () => {
+    await render();
+    expect(container.querySelector('textarea[aria-label="本机启动器安装命令"]')?.textContent).toContain('native-host.js');
+    send.mockResolvedValueOnce({ ok: false, error: '尚未安装本机启动器' });
+    await act(async () => button('配置并启动').click());
+    expect(send).toHaveBeenCalledWith({ type: 'PAGE_AGENT_SETUP_MCP' });
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('尚未安装本机启动器');
+    send.mockResolvedValue({ ok: true, result: info });
+    await act(async () => button('配置并启动').click());
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining('本机配置已完成'));
+  });
+  it('copies installation for the loaded Chrome extension and never starts an already connected service', async () => {
+    send.mockResolvedValue({ ok: true, result: { ...info, connected: true } });
+    await render();
+    expect(button('配置并启动').disabled).toBe(true);
+    await act(async () => button('复制启动器安装命令').click());
+    expect(clipboard.mock.calls[0][0]).toContain('--install abcdefghijklmnopabcdefghijklmnop');
+    expect(clipboard.mock.calls[0][0]).not.toContain('instance-A');
+  });
+  it('unlocks the start button when an automatic start finishes with an installation error', async () => {
+    send.mockResolvedValue({ ok: true, result: { ...info, serverStarting: true } });
+    await render();
+    expect(button('配置并启动中…').disabled).toBe(true);
+    send.mockResolvedValue({ ok: true, result: { ...info, serverStarting: false, launcherError: '尚未安装启动器' } });
+    await act(async () => listeners.forEach(listener => listener({ type: 'PAGE_AGENT_BRIDGE_STATUS', connected: false })));
+    expect(button('配置并启动').disabled).toBe(false);
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('尚未安装启动器');
+  });
   it('imports the real local JSON and enables copying without manual path edits', async () => {
     send.mockResolvedValue({ ok: true, result: { ...info, clientOptions: DEFAULT_MCP_OPTIONS } });
     await render();
@@ -66,7 +105,7 @@ describe('MCP configuration panel', () => {
     send.mockResolvedValue({ ok: true, result: info });
     await act(async () => listeners.forEach(listener => listener({ type: 'PAGE_AGENT_BRIDGE_STATUS', connected: true })));
     expect(button('复制 MCP 配置').disabled).toBe(false);
-    expect(container.querySelector('textarea')?.value).toContain(info.clientOptions.serverPath);
+    expect(container.querySelector<HTMLTextAreaElement>('textarea[aria-label="MCP 客户端 JSON 配置"]')?.value).toContain(info.clientOptions.serverPath);
   });
   it('shows unconfigured without rendering or copying placeholder JSON', async () => {
     send.mockResolvedValue({ ok: true, result: { ...info, clientOptions: DEFAULT_MCP_OPTIONS } });
@@ -108,7 +147,7 @@ describe('MCP configuration panel', () => {
     await render();
     expect(container.querySelector('[role="alert"]')?.textContent).toContain('当前连接的服务与本机配置路径不一致');
     expect(container.textContent).toContain(running.serverPath);
-    expect(container.querySelector('textarea')?.value).toContain(current.serverPath);
+    expect(container.querySelector<HTMLTextAreaElement>('textarea[aria-label="MCP 客户端 JSON 配置"]')?.value).toContain(current.serverPath);
     await act(async () => button('复制 MCP 配置').click());
     expect(clipboard.mock.calls[0][0]).not.toContain('/v37');
   });

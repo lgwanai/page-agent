@@ -228,6 +228,15 @@ export interface ScreenshotNode extends BaseNode {
   region?: { x: number; y: number; width: number; height: number };
   fileName: string;
 }
+export interface MediaRecordingNode extends BaseNode {
+  kind: 'mediaRecording';
+  action: 'record' | 'start' | 'stop' | 'status';
+  mode: 'videoAudio' | 'audio';
+  durationMs: number;
+  fileName: string;
+  /** Optional exact session ID, usually a reference to a preceding start node. */
+  recordingId?: string;
+}
 export interface EmailNode extends BaseNode {
   kind: 'email';
   to: string;
@@ -322,7 +331,7 @@ export interface RequestNode extends BaseNode {
   timeoutMs: number;
 }
 
-export type WorkflowNode = StartNode | DomNode | DialogNode | QueryNode | OutputNode | WatchNode | ScreenshotNode | DataTableNode | TableFillNode | EmailNode | CalendarNode | PaginationNode | AiNode | ActionNode | WaitNode | LoopNode | RequestNode;
+export type WorkflowNode = StartNode | DomNode | DialogNode | QueryNode | OutputNode | WatchNode | ScreenshotNode | MediaRecordingNode | DataTableNode | TableFillNode | EmailNode | CalendarNode | PaginationNode | AiNode | ActionNode | WaitNode | LoopNode | RequestNode;
 
 export type EdgePort = 'success' | 'failure' | 'body' | 'done';
 
@@ -501,10 +510,12 @@ export function defaultEventForTarget(target: PageTarget): EventDefinition {
 }
 
 export const NODE_KIND_LABELS: Record<WorkflowNode['kind'], string> = {
+  mediaRecording: '网页录制',
   start: '开始', dialog: '浏览器弹窗', dom: '网页操作', query: '检索', output: '输出', watch: '监控', screenshot: '截图', datatable: '数据表', tableFill: '表格填充', email: '发送邮件', calendar: '日历选择器', pagination: '分页', ai: '智能分析', action: '调用流程', wait: '等待', loop: '循环', request: '请求',
 };
 
 export const NODE_KIND_ENGLISH: Record<WorkflowNode['kind'], string> = {
+  mediaRecording: 'Web Recording',
   start: 'Start', dom: 'Selector', dialog: 'Browser Dialog', query: 'Query', output: 'Output', watch: 'Watch', screenshot: 'Screenshot', datatable: 'DataTable', tableFill: 'Table Fill', email: 'Email', calendar: 'Calendar', pagination: 'Pagination', ai: 'AI', action: 'Action', wait: 'Wait', loop: 'Loop', request: 'HTTP Request',
 };
 

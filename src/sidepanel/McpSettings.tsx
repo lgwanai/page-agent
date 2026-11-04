@@ -1,3 +1,4 @@
+import { nativeLauncherInstallCommand } from '@/shared/mcp-launcher';
 import { VersionStatus } from './VersionStatus';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { RuntimeMessage, RuntimeResponse } from '@/types/messages';
@@ -15,10 +16,13 @@ export function McpSettings({ instanceId, connected, onClose, notify }: {
   const [busy, setBusy] = useState<string | null>(null);
   const [loadError, setLoadError] = useState('');
   const [loaded, setLoaded] = useState(false);
+  const [startError, setStartError] = useState('');
   const configFile = useRef<HTMLInputElement>(null);
   const optionsDirty = useRef(false);
   const issue = mcpOptionsError(options);
   const configJson = loaded && !issue ? JSON.stringify(buildMcpClientConfig(options), null, 2) : '';
+  let installCommand = '';
+  try { installCommand = nativeLauncherInstallCommand(options, chrome.runtime.id); } catch { /* local configuration required */ }
   const call = async (message: RuntimeMessage) => {
     const response = await chrome.runtime.sendMessage(message) as RuntimeResponse | undefined;
     if (!response?.ok) throw new Error(response?.error ?? '插件后台未响应，请重新加载插件');
@@ -42,7 +46,8 @@ export function McpSettings({ instanceId, connected, onClose, notify }: {
     const listener = (message: RuntimeMessage) => {
       if (message.type === 'PAGE_AGENT_BRIDGE_STATUS') {
         setInfo((current) => ({ ...current, connected: message.connected, connecting: Boolean(message.connecting), error: message.error }));
-        if (message.connected) void refresh();
+        if (message.connected) setStartError('');
+        void refresh();
       }
     };
     const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
@@ -71,14 +76,34 @@ export function McpSettings({ instanceId, connected, onClose, notify }: {
     finally { setBusy(null); }
   };
 
+  const start = async () => {
+    setBusy('start'); setStartError('');
+    try {
+      const response = await call({ type: 'PAGE_AGENT_SETUP_MCP' });
+      if (response.result) setInfo(response.result as McpConnectionInfo);
+      await refresh();
+      notify('本机配置已完成，MCP 服务已连接');
+    } catch (error) { setStartError((error as Error).message); }
+    finally { setBusy(null); }
+  };
+
   return <div className="settings-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <section className="settings-panel mcp-settings" role="dialog" aria-modal="true" aria-labelledby="mcp-settings-title">
       <div className="inspector-head"><div><strong id="mcp-settings-title">MCP 连接配置</strong><span>模型 → 本机 Node 服务 → Chrome 插件</span></div><button className="icon-btn" aria-label="关闭 MCP 配置" onClick={onClose}>×</button></div>
-      <div className={`mcp-status ${info.connected ? 'online' : ''}`} role="status"><i /><div><strong>{info.connected ? '已连接本机 MCP 服务' : info.connecting ? '正在连接本机 MCP 服务…' : '尚未连接本机 MCP 服务'}</strong><span>{info.error || (info.connected ? '此 Chrome 插件实例已连接；执行工作流仍需提供对应访问密钥。' : '插件会自动连接本机服务；启动服务后可点击下方重试连接。')}</span></div></div>
+      <div className={`mcp-status ${info.connected ? 'online' : ''}`} role="status"><i /><div><strong>{info.connected ? '已连接本机 MCP 服务' : info.connecting ? '正在连接本机 MCP 服务…' : '尚未连接本机 MCP 服务'}</strong><span>{info.error || (info.connected ? '此 Chrome 插件实例已连接；执行工作流仍需提供对应访问密钥。' : '点击「配置并启动」，自动读取本机配置并连接服务。首次使用需双击完整安装包内的 Setup 一次。')}</span></div></div>
       {loadError && <p className="mcp-error" role="alert">{loadError}</p>}
+      <div className="mcp-section-title">连接本机 MCP 服务</div>
+      <p className="mcp-help">首次使用只需双击完整安装包中的 Setup 一次，它会自动注册启动器并写好路径。随后点击下方按钮即可，无需导入文件、填写路径或复制命令到终端。</p>
+      <div className="settings-actions"><button className="primary" disabled={Boolean(busy) || info.connected && !info.configurationMismatch || info.serverStarting} onClick={() => void start()}>{busy === 'start' || info.serverStarting ? '配置并启动中…' : '配置并启动'}</button><button className="secondary" disabled={Boolean(busy)} onClick={() => void refresh(true)}>刷新状态</button></div>
+      {(startError || info.launcherError) && <p className="mcp-error" role="alert">{startError || info.launcherError}</p>}
+      {loaded && issue && <p className="mcp-help">还没有检测到本机配置？请运行安装包内的 Setup.command（Mac）或 Setup.cmd（Windows），并确认加载的是同一安装包的 extension 目录。仅有插件 ZIP 时，请先下载完整安装包。</p>}
+      <p className="mcp-help">打开插件时也会自动检测服务。模型客户端若需调用工作流，仍需在客户端启用 Page Agent MCP 配置。</p>
+      <details className="mcp-advanced"><summary>高级设置与手动配置</summary>
       <label>插件连接地址（WebSocket）<div className="mcp-copy-field"><input readOnly value={info.bridgeUrl} /><button className="secondary compact" onClick={() => void copy(info.bridgeUrl, '插件连接地址已复制')}>复制</button></div><small>固定端口 {MCP_BRIDGE_PORT}，用于插件连接本机服务，不是填写到模型客户端的 HTTP MCP 地址。</small></label>
       <label>当前 Chrome 插件实例 ID<div className="mcp-copy-field"><input readOnly value={info.instanceId} /><button className="secondary compact" disabled={!info.instanceId} onClick={() => void copy(info.instanceId, '实例 ID 已复制')}>复制</button></div><small>调用工作流时传入 instanceId、workflowId 和 key，避免操作其他 Chrome 实例。</small></label>
       <VersionStatus serverVersion={info.serverVersion} protocolVersion={info.protocolVersion} connected={info.connected} />
+      <button className="secondary" disabled={!installCommand || Boolean(busy)} onClick={() => void copy(installCommand, '安装命令已复制')}>复制启动器安装命令</button>
+      {installCommand ? <label>本机启动器安装命令<textarea readOnly value={installCommand} aria-label="本机启动器安装命令" /><small>仅用于旧安装方式的手动修复。新版完整安装包运行 Setup 后无需此步骤。</small></label> : <p className="mcp-help">未读取到有效路径。新版安装包请直接运行 Setup，配置会自动读取。</p>}
       <div className="mcp-section-title">1. 准备本机 MCP 服务</div>
       <input ref={configFile} type="file" accept=".json,application/json" className="hidden-file-input" aria-label="导入本机 MCP 配置文件" onChange={async (event) => {
         const file = event.target.files?.[0]; event.target.value = '';
@@ -102,7 +127,8 @@ export function McpSettings({ instanceId, connected, onClose, notify }: {
       <div className="mcp-section-title">3. 在 MCP 客户端启动服务</div>
       <p className="mcp-help">将 JSON 中的 page-agent 条目添加到客户端的 mcpServers 配置，保留原有其他条目，然后启用服务或重启客户端。通过 list_page_agent_instances 查找本实例；也可调用 page_agent_status 并传入上面的 instanceId 检查目标页面。</p>
       <details className="mcp-troubleshooting"><summary>无法连接？检查这些情况</summary><ul><li>便携版请完整解压并运行新目录内 Setup；不需要 npm install 或构建。</li><li>Chrome 扩展“详细信息”中的加载目录是否仍是旧包？重新加载不会切换目录。</li><li>Agent 客户端是否重新导入了新目录生成的 page-agent-mcp.json？Setup 不会自动修改客户端设置。</li><li>端口 {MCP_BRIDGE_PORT} 上可能仍是旧共享桥接；按当前服务脚本路径识别，勿结束所有 Node 进程。</li><li>多个 MCP 客户端可以共用桥接；切换版本前先确认没有工作流运行。</li><li>插件未连接时不能直接在客户端填写 WebSocket 地址，需使用上面的 stdio 配置。</li></ul></details>
-      <div className="settings-actions"><button className="secondary" onClick={() => void refresh(true)}>刷新状态</button><button className="primary" disabled={Boolean(busy) || info.connected || info.connecting} onClick={() => void retry()}>{busy === 'retry' ? '重试中…' : '重试连接'}</button></div>
+      <div className="settings-actions"><button className="primary" disabled={Boolean(busy) || info.connected || info.connecting} onClick={() => void retry()}>{busy === 'retry' ? '重试中…' : '重试连接'}</button></div>
+      </details>
     </section>
   </div>;
 }

@@ -72,7 +72,7 @@ for (const arch of arches) {
   await writeFile(join(bundle, 'README.txt'), [
     `Page Agent ${version} — macOS ${arch === 'arm64' ? 'Apple 芯片' : 'Intel'} 免安装版`, '',
     '1. 完整解压到固定且可写的目录，不要直接在压缩包内运行。支持中文和空格路径。',
-    '2. 双击 Setup.command，自动生成 page-agent-mcp.json，并复制配置到剪贴板。',
+    '2. 双击 Setup.command，自动注册本机启动器并写入配置。插件 MCP 页面点击「配置并启动」即可，无需手动导入文件或复制命令。',
     '3. 在 MCP 客户端导入 JSON 或粘贴配置。不用修改路径，不会覆盖其他客户端配置。',
     '4. Chrome 打开 chrome://extensions，开启开发者模式，加载本目录 extension 文件夹。',
     '无需安装 Node、npm、依赖或构建代码。请保留所有文件夹。',

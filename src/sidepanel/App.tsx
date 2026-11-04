@@ -1,4 +1,5 @@
 import { CanvasToolbar, NodeChoices, type CreatableNodeKind } from './CanvasToolbar';
+import { MediaRecordingControl } from './MediaRecordingControl';
 import { PropertyDock } from './PropertyDock';
 import { applyLayoutPositions, type CanvasLayoutControls, type CanvasViewCommand, type LayoutPositions } from './canvas-layout';
 import { structuralJson } from '@/shared/structural-json';
@@ -129,6 +130,7 @@ export function App() {
   const [providerConfigured, setProviderConfigured] = useState(false);
   const [showProvider, setShowProvider] = useState(false);
   const [showMcp, setShowMcp] = useState(false);
+  const [showMediaRecording, setShowMediaRecording] = useState(false);
   const [portMenu, setPortMenu] = useState<PortMenu | null>(null);
   const [recording, setRecording] = useState(false);
   const [recordCount, setRecordCount] = useState(0);
@@ -339,6 +341,7 @@ export function App() {
       else if (kind === 'tableFill') node = { id, kind, name, target: { name, selector: '', frameId: 0, tagName: '', label: '' }, data: '{{data}}', keyColumns: [''], skipUnmatchedRows: false, position };
       else if (kind === 'datatable') node = { id, kind, name, target: { name, selector: '', frameId: 0, tagName: '', label: '' }, header: 'auto', parseNumbers: true, exportExcel: true, fileName: '数据表', position };
       else if (kind === 'screenshot') node = { id, kind, name, mode: 'viewport', fileName: '截图', position };
+      else if (kind === 'mediaRecording') node = { id, kind, name, action: 'record', mode: 'videoAudio', durationMs: 180000, fileName: '网页录制', recordingId: '', position };
       else if (kind === 'email') node = { id, kind, name, to: '', subject: '', body: '', attachments: [], position };
       else if (kind === 'calendar') node = { id, kind, name, target: { name, selector: '', frameId: 0, tagName: '', label: '' }, date: '', endDate: '', mode: 'single', position };
       else if (kind === 'pagination') node = { id, kind, name, target: { name, selector: '', frameId: 0, tagName: '', label: '' }, mode: 'all', page: '1', pageVariable: 'page', maxPages: 100, timeoutMs: 5000, settleMs: 300, body: { nodes: [], edges: [] }, position };
@@ -699,11 +702,12 @@ export function App() {
 
   const selectedNode = allNodes(state.draft).find((node) => node.id === selectedId);
   return <div className={`app${mode === 'editor' ? ' is-editing' : ''}`}>
-    <header className="app-head"><div className="brand"><span className="logo">P</span><div><strong>Page Agent</strong><small>网页能力编排器{pluginVersion && ` · v${pluginVersion}`}</small></div></div><div className="head-actions"><button className={`provider-chip ${providerConfigured ? 'online' : ''}`} onClick={() => setShowProvider(true)}><i />{providerConfigured ? 'AI 已配置' : '配置 AI'}</button><button className={`bridge ${bridgeConnected ? 'online' : ''}`} title="查看 MCP 连接配置" aria-label="MCP 连接配置" onClick={() => setShowMcp(true)}><i />MCP</button></div></header>
+    <header className="app-head"><div className="brand"><img className="logo" src="/icons/page-agent-128.png" alt="" width="38" height="38" /><div><strong>Page Agent</strong><small>网页能力编排器{pluginVersion && ` · v${pluginVersion}`}</small></div></div><div className="head-actions"><button className={`provider-chip ${providerConfigured ? 'online' : ''}`} onClick={() => setShowProvider(true)}><i />{providerConfigured ? 'AI 已配置' : '配置 AI'}</button><button className={`bridge ${bridgeConnected ? 'online' : ''}`} title="查看 MCP 连接配置" aria-label="MCP 连接配置" onClick={() => setShowMcp(true)}><i />MCP</button></div></header>
     {ready && mode === 'library' && recoverableDraft && !recording && <aside className="recovery-banner"><span>发现未保存草稿 · {recoverableDraft.editing?.name ?? '新工作流'}</span><button className="secondary" onClick={recoverDraft}>恢复草稿</button><button className="text-btn" onClick={() => void discardRecovery()}>丢弃草稿</button></aside>}
     {draftError && <p role="alert">{draftError}</p>}
     {ready && <button className="text-btn history-toggle" onClick={() => setShowHistory(true)}>运行历史</button>}
     {ready && mode === 'library' && <button className="text-btn" onClick={() => setShowTrash(true)}>回收站</button>}
+    {ready && <button className="text-btn" onClick={() => setShowMediaRecording(true)}>录屏与录音</button>}
     {ready && <RunControl notify={notify} onStatus={setExecutionActive} />}
     <main className={mode === 'editor' ? 'compose-main' : ''}>
       {!ready ? <div className="empty" role="status"><strong>{loadError ? '工作流列表加载失败' : '正在加载工作流…'}</strong>{loadError && <button className="secondary" onClick={() => window.location.reload()}>重新加载</button>}</div> : mode === 'library' ? recording ? <section className="recording-view"><div className="recording-indicator"><i />录制中</div><h2>请在网页中操作</h2><p>点击、输入、滚动、焦点、悬停和组合键等操作会按顺序记录。</p><strong>已记录 {recordCount} 个操作</strong><button className="record-button active" disabled={recordingBusy} onClick={() => void toggleRecording()}>{recordingBusy ? '正在停止…' : '停止录制并编辑'}</button><small>也可以使用网页中的悬浮停止按钮。</small></section> : <WorkflowList state={state} onRun={runScript} onCreate={() => setShowCreate(true)} onEdit={(workflow) => openDefinition(workflow, 'script')} onRename={openRename} onDelete={(workflow) => void deleteDefinition(workflow)} onDuplicate={(workflow) => void duplicateDefinition(workflow)} onTags={(workflow) => void tagDefinition(workflow)} onImport={() => importInput.current?.click()} onExport={downloadWorkflow} onCopyId={(workflow) => void copyWorkflowId(workflow)} onCopyPrompt={(workflow) => void copyWorkflowPrompt(workflow)} onCopyKey={(workflow) => void copyWorkflowKey(workflow)} running={running} busy={Boolean(running) || executionActive || saving} lastRun={lastRun} /> : <section className="compose-view" aria-label="工作流编辑器">
@@ -726,6 +730,7 @@ export function App() {
     {showHistory && <RunHistory onClose={() => setShowHistory(false)} />}
     {showProvider && <ProviderSettings onClose={() => { setShowProvider(false); void send<RuntimeResponse>({ type: 'PAGE_AGENT_GET_PROVIDER' }).then((response) => setProviderConfigured(Boolean((response.result as AiProviderConfig | undefined)?.configured))); }} notify={notify} />}
     {showMcp && <McpSettings instanceId={instanceId} connected={bridgeConnected} onClose={() => setShowMcp(false)} notify={notify} />}
+    {showMediaRecording && <MediaRecordingControl onClose={() => setShowMediaRecording(false)} />}
     {portMenu && <div className="node-picker-scrim" onMouseDown={(event) => { if (event.target === event.currentTarget) setPortMenu(null); }}><section className="node-picker" style={{ left: Math.max(8, Math.min(portMenu.x + 12, window.innerWidth - 292)), top: Math.max(8, Math.min(portMenu.y - 42, window.innerHeight - 480)) }}><div><strong>添加后续节点</strong><small>{portMenu.port === 'failure' ? '失败路径' : portMenu.port === 'body' ? '遍历路径' : portMenu.port === 'done' ? '完成路径' : '成功路径'}</small></div><NodeChoices onChoose={choosePortNode} /></section></div>}
     <input ref={importInput} className="hidden-file-input" type="file" accept="application/json,.json" onChange={(event) => { const file = event.target.files?.[0]; if (file) void readWorkflowFile(file); }} />
     {pendingRun && <RunInputs historyKey={pendingRun.historyKey} inputs={pendingRun.inputs} onCancel={() => setPendingRun(null)} onRun={(variables) => { const request = pendingRun; setPendingRun(null); if (request.kind === 'script') void runScript(request.script, variables); else void runGraph(request.nodes, request.edges, request.id, variables); }} />}

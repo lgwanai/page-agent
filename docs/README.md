@@ -4,9 +4,9 @@
 
 | 文档信息 | 基线 |
 | --- | --- |
-| 核对日期 | 2026-10-27 |
-| Chrome 扩展 | 0.10.66 |
-| MCP 服务 | 0.10.17 |
+| 核对日期 | 2026-11-04 |
+| Chrome 扩展 | 0.10.77 |
+| MCP 服务 | 0.10.21 |
 | 工作流交换格式 | `page-agent-workflow`，`schemaVersion: 1` |
 | 阅读形式 | 分章 Markdown、[离线 HTML 使用手册](user-manual.html) |
 
@@ -21,10 +21,14 @@
 | 查找、导入导出、删除与恢复 | [工作流管理](guide/workflows.md) |
 | 查看结果、停止运行、定位失败 | [运行与调试](guide/execution.md) |
 | 让 Agent 创建或调用流程 | [MCP 接入与编排](guide/mcp.md) |
+| 录制直播画面、网页声音或查询异步任务 | [网页录制与状态 URL](live-recording.md) |
+| 一键启动服务、选择 Windows/Mac 包 | [跨系统部署](cross-platform-mcp.md) |
 | 定位元素、读取数据、上传、请求、弹窗 | [节点使用指南](nodes/README.md) |
 | 处理连接或页面变化问题 | [故障排查](guide/troubleshooting.md) |
 | 核对数据存储与外发范围 | [数据与权限](guide/data-and-permissions.md) |
 | 查看限制和术语 | [限制速查](reference/limits.md)、[术语表](reference/glossary.md) |
+
+当前提供 18 种节点、22 个 MCP 工具。工作流异步录屏立即返回状态 URL，最终成功以该 URL 的 `done/success` 为准；普通节点执行与业务结果仍按运行指南区分。Windows 包和平台分支已检查，Windows 真机录制尚未验收。
 
 ## 建议学习顺序
 
@@ -36,14 +40,15 @@
 
 ## 节点分类
 
-当前有 17 种节点类型；“开始”自动创建，“调用流程 / Action”保留兼容，其他 15 种可从新增节点菜单选择。
+当前有 18 种节点类型；“开始”自动创建，“调用流程 / Action”保留兼容，其他 16 种可从新增节点菜单选择。
 
 - [网页操作与定位](nodes/web.md)：网页操作、文件上传、定位修复和 iframe。
 - [数据读取与结果](nodes/data.md)：检索、监控、数据表、表格填充和输出。
 - [流程控制](nodes/control.md)：开始、等待、循环、分页、失败分支和兼容 Action。
 - [请求](nodes/request.md)：HTTP/HTTPS、Text/JSON、请求头、请求体和变量。
 - [弹窗与日历](nodes/dialog-and-calendar.md)：原生确认框、输入框、离开页面确认与日期时间。
-- [截图、邮件与智能分析](nodes/media-and-ai.md)：文件输出、附件、本机配置与模型调用。
+- [网页录制](live-recording.md)：网页直播画面与声音、仅录音、后台录制和文件保存。
+- [录制、截图、邮件与智能分析](nodes/media-and-ai.md)：文件输出、附件、本机配置与模型调用。
 
 ## 文档目录与维护
 

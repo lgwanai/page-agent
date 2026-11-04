@@ -1,5 +1,10 @@
 import type { WorkflowNode } from '@/types/workflow';
+import { validateRecordingOptions } from './media-recording';
 export function validateMediaNode(node: WorkflowNode) {
+  if (node.kind === 'mediaRecording') {
+    validateRecordingOptions(node);
+    if (!['record', 'start', 'stop', 'status'].includes(node.action) || (node.recordingId !== undefined && typeof node.recordingId !== 'string')) throw new Error('网页录制节点操作或录制 ID 无效');
+  }
   if (node.kind === 'tableFill' && node.structure !== undefined && (!node.structure || typeof node.structure !== 'object' || Array.isArray(node.structure) || Object.entries(node.structure).some(([key, value]) => !['headerSelector', 'rowSelector', 'cellSelector'].includes(key) || typeof value !== 'string' || value.length > 2000))) throw new Error('表格填充高级结构配置无效；表头、数据行、单元格应为 CSS Selector 文本');
   if (node.kind === 'tableFill' && (!node.target || typeof node.target.selector !== 'string' || !Number.isInteger(node.target.frameId) || node.target.frameId < 0 || typeof node.data !== 'string' || !Array.isArray(node.keyColumns) || !node.keyColumns.length || node.keyColumns.some(key => typeof key !== 'string' || !key.trim()) || new Set(node.keyColumns.map(key => key.trim())).size !== node.keyColumns.length || typeof node.skipUnmatchedRows !== 'boolean')) throw new Error('表格填充节点需配置表格、data 和至少一个不重复的 key 列');
   if(node.kind==='datatable'&&(!node.target||typeof node.target.selector!=='string'||!Number.isInteger(node.target.frameId)||node.target.frameId<0||!['auto','firstRow','none'].includes(node.header)||typeof node.parseNumbers!=='boolean'||typeof node.exportExcel!=='boolean'||typeof node.fileName!=='string'))throw new Error('DataTable 节点配置无效');

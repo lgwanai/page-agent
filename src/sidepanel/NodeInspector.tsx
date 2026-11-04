@@ -156,6 +156,18 @@ export function NodeInspector({ node, nodes, actions, onChange, onDelete, onRun,
       <label>文件名称<input value={node.fileName} placeholder="截图，支持 {{变量}}" onChange={event=>onChange({...node,fileName:event.target.value})}/></label>
       <small>输出 PNG 文件。后续邮件附件可填写 {'{{'+node.name+'}}'}；超长页面可能输出多个分段文件。框选区域使用文档坐标，布局变化后请重新框选。</small>
     </>}
+    {node.kind === 'mediaRecording' && <>
+      <label>录制操作<select value={node.action} onChange={event => onChange({ ...node, action: event.target.value as typeof node.action })}><option value="record">异步录制指定时长</option><option value="start">开始录制，继续后续节点</option><option value="stop">停止录制，后台保存</option><option value="status">读取录制状态</option></select></label>
+      {(node.action === 'record' || node.action === 'start') && <>
+        <label>录制内容<select value={node.mode} onChange={event => onChange({ ...node, mode: event.target.value as typeof node.mode })}><option value="videoAudio">网页画面和声音</option><option value="audio">仅网页声音</option></select></label>
+        <label>{node.action === 'start' ? '自动停止上限（秒）' : '录制时长（秒）'}<input type="number" min="1" max="1800" value={node.durationMs / 1000} onChange={event => onChange({ ...node, durationMs: Number(event.target.value) * 1000 })} /></label>
+        <label>录制文件名<input value={node.fileName} placeholder="支持 {{变量}}" onChange={event => onChange({ ...node, fileName: event.target.value })} /></label>
+      </>}
+      {(node.action === 'stop' || node.action === 'status') && <label>录制 ID<input value={node.recordingId ?? ''} placeholder="留空使用目标标签页，或 {{开始录制.id}}" onChange={event => onChange({ ...node, recordingId: event.target.value })} /></label>}
+      <p className="input-hint">先打开直播并取消播放器静音，在该网页点击 Page Agent 图标取得录制权限。开始节点建议开启“保持当前页面”，跨站跳转或新标签页需重新点击图标。仅录标签页画面和网页声音，保存为 WebM。</p>
+      <p className="input-hint">录制在后台继续，关闭侧边栏不会停止。录制上限为 30 分钟；关闭浏览器或重载扩展会中断录制。定时录制与开始操作均立即返回 taskId、statusUrl 和 pollAfterMs；Agent 轮询 statusUrl，完成后读取 filePath/fileUrl。需要连接新版 MCP 本机服务。工作流结束后录制继续；请使用停止节点或侧栏停止。状态 URL 最长有效 24 小时，支持最近 100 个任务。</p>
+      <FileDownloads data={lastRun?.steps.filter(step => step.nodeId === node.id && step.ok).at(-1)?.data} />
+    </>}
     {node.kind === 'request' && <>
       <label>请求链接<input value={node.url} placeholder="https://example.com/api，支持 {{变量}}" onChange={event => onChange({ ...node, url: event.target.value })} /></label>
       <label>请求方法<select value={node.method} onChange={event => onChange({ ...node, method: event.target.value as typeof node.method, body: ['GET', 'HEAD'].includes(event.target.value) ? '' : node.body })}>{REQUEST_METHODS.map(method => <option key={method}>{method}</option>)}</select></label>

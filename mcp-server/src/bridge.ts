@@ -6,6 +6,11 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import type { AddressInfo } from 'node:net';
 import { deliverEmail } from './email.js';
+import { createServer, type Server } from 'node:http';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { RecordingTaskRegistry } from './recording-tasks.js';
+import { RecordingHttp } from './recording-http.js';
 
 interface PendingRequest {
   resolve: (value: unknown) => void;
@@ -37,26 +42,45 @@ export class ExtensionBridge {
   private readonly clients = new Map<string, ExtensionClient>();
   private readonly pending = new Map<string, PendingRequest>();
   private readonly server: WebSocketServer;
+  private readonly httpServer: Server;
+  private readonly recordingTasks: RecordingTaskRegistry;
   readonly ready: Promise<void>;
   private readonly relays = new Set<WebSocket>();
   private readonly running = new Set<string>();
 
-  constructor(port = 17373) {
-    this.server = new WebSocketServer({ port, host: '127.0.0.1' });
-    this.ready = new Promise((resolve, reject) => {
-      this.server.once('listening', resolve);
-      this.server.once('error', reject);
+  constructor(port = 17373, options: { recordingTaskStorePath?: string | null } = {}) {
+    this.server = new WebSocketServer({ noServer: true });
+    const baseUrl = () => `http://127.0.0.1:${this.address()?.port ?? port}`;
+    const storePath = options.recordingTaskStorePath === null ? undefined
+      : options.recordingTaskStorePath ?? (port ? join(homedir(), '.page-agent', `recording-tasks-${port}.json`) : undefined);
+    this.recordingTasks = new RecordingTaskRegistry(baseUrl, storePath);
+    const recordings = new RecordingHttp(this.recordingTasks, baseUrl,
+      (instanceId, recordingId) => this.request(instanceId, 'recording_status', { recordingId }, 3000));
+    this.httpServer = createServer((request, response) => {
+      void recordings.handle(request, response).then(handled => {
+        if (handled) return;
+        response.writeHead(request.url === '/extension' ? 426 : 404);
+        response.end();
+      }).catch(() => { if (!response.headersSent) response.writeHead(500); response.end(); });
     });
+    this.httpServer.on('upgrade', (request, socket, head) => {
+      this.server.handleUpgrade(request, socket, head, client => this.server.emit('connection', client, request));
+    });
+    this.ready = new Promise((resolve, reject) => {
+      this.httpServer.once('listening', resolve);
+      this.httpServer.once('error', reject);
+    });
+    this.httpServer.listen(port, '127.0.0.1');
     this.server.on('connection', (socket, request) => {
       if (request.url === '/mcp-client' && !request.headers.origin) {
         this.relays.add(socket);
-        socket.send(JSON.stringify({ type: 'broker_ready', protocol: 1, capabilities: ['workflow_authoring_v1', 'page_screenshot_v1'], instances: this.instances }));
+        socket.send(JSON.stringify({ type: 'broker_ready', protocol: 1, capabilities: ['workflow_authoring_v1', 'page_screenshot_v1', 'recording_tasks_v1'], instances: this.instances }));
         socket.on('error', () => undefined);
         socket.on('close', () => this.relays.delete(socket));
         socket.on('message', (raw) => { void this.relayRequest(socket, String(raw)); });
         return;
       }
-      if (request.url !== '/extension') {
+      if (request.url !== '/extension' || (request.headers.origin && !/^chrome-extension:\/\/[a-p]{32}$/.test(request.headers.origin))) {
         socket.close(1008, 'Only extension clients are allowed');
         return;
       }
@@ -75,7 +99,7 @@ export class ExtensionBridge {
         this.rejectForSocket(socket, new Error('目标 Chrome 插件实例已断开，操作结果可能未知，请检查页面后再重试'));
       });
     });
-    this.server.on('listening', () => process.stderr.write(`[page-agent] Bridge listening at ws://127.0.0.1:${port}/extension\n`));
+    this.httpServer.on('listening', () => process.stderr.write(`[page-agent] Bridge listening at ws://127.0.0.1:${this.address()?.port}/extension\n`));
   }
 
   private broadcastInstances(): void {
@@ -112,7 +136,7 @@ export class ExtensionBridge {
       .map(({ instanceId, version, connectedAt }) => ({ instanceId, version, connectedAt }));
   }
 
-  address(): AddressInfo | null { return this.server.address() as AddressInfo | null; }
+  address(): AddressInfo | null { return this.httpServer.address() as AddressInfo | null; }
 
   async close(): Promise<void> {
     for (const socket of this.server.clients) {
@@ -120,6 +144,8 @@ export class ExtensionBridge {
       socket.terminate();
     }
     await new Promise<void>((resolve, reject) => this.server.close((error) => error ? reject(error) : resolve()));
+    await new Promise<void>((resolve, reject) => this.httpServer.close((error) => error ? reject(error) : resolve()));
+    await this.recordingTasks.flush();
   }
 
   private rejectForSocket(socket: WebSocket, error: Error): void {
@@ -153,9 +179,23 @@ export class ExtensionBridge {
         return;
       }
       this.clients.set(message.instanceId, { socket, instanceId: message.instanceId, version: message.version ?? '', connectedAt: new Date().toISOString() });
-      socket.send(JSON.stringify({ type: 'services', email: true, uploadNativePaths: true, serverVersion, protocolVersion: 1, clientOptions: { command: process.execPath, serverPath: fileURLToPath(new URL('./index.js', import.meta.url)) } }));
+      socket.send(JSON.stringify({ type: 'services', recordingTasks: true, email: true, uploadNativePaths: true, serverVersion, protocolVersion: 1, clientOptions: { command: process.execPath, serverPath: fileURLToPath(new URL('./index.js', import.meta.url)) } }));
       this.broadcastInstances();
       process.stderr.write(`[page-agent] Instance ${message.instanceId} connected\n`);
+      return;
+    }
+    if (message.type === 'register_media_recording_task' || message.type === 'media_recording_task_update') {
+      const owner = [...this.clients.values()].find(client => client.socket === socket);
+      if (!owner) { socket.close(1008, 'Instance handshake required'); return; }
+      const data = message as BridgeResponse & { requireFullDuration?: unknown; requestedDurationMs?: unknown };
+      if (message.type === 'media_recording_task_update') {
+        void this.recordingTasks.update(owner.instanceId, message.result).catch(error => process.stderr.write(`[page-agent] Recording update failed: ${(error as Error).message}\n`));
+      } else if (message.id) {
+        const reply = (value: object) => { if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'media_recording_task_result', id: message.id, ...value })); };
+        if (typeof data.requireFullDuration !== 'boolean') { reply({ ok: false, error: '异步录屏参数无效' }); return; }
+        void this.recordingTasks.create(owner.instanceId, message.result, data.requireFullDuration, data.requestedDurationMs as number)
+          .then(result => reply({ ok: true, result })).catch((error: Error) => reply({ ok: false, error: error.message }));
+      }
       return;
     }
     if (message.type === 'inspect_upload_files' && message.id && [...this.clients.values()].some(client => client.socket === socket)) {
